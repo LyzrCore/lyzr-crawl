@@ -170,6 +170,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/jobs": {
+            "get": {
+                "description": "Retrieves a list of recent jobs from the database",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "jobs"
+                ],
+                "summary": "List recent jobs",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Maximum number of results to return",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by job status (running, completed, failed)",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/main.JobStatus"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/jobs/{id}": {
             "get": {
                 "description": "Retrieves the current status and progress of a crawl job",
@@ -226,6 +276,14 @@ const docTemplate = `{
                 "depth": {
                     "type": "integer",
                     "example": 2
+                },
+                "job_id": {
+                    "type": "string",
+                    "example": "my-custom-session-123"
+                },
+                "max_urls": {
+                    "type": "integer",
+                    "example": 1000
                 },
                 "url": {
                     "type": "string",
@@ -318,6 +376,9 @@ const docTemplate = `{
                 "progress": {
                     "type": "string",
                     "example": "Starting crawl..."
+                },
+                "request": {
+                    "$ref": "#/definitions/main.CrawlRequest"
                 },
                 "result": {
                     "$ref": "#/definitions/main.CrawlResult"

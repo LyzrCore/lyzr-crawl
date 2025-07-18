@@ -45,20 +45,21 @@ func main() {
 		port      = flag.String("port", "8080", "API server port")
 		
 		// CLI mode flags
-		workers   = flag.Int("workers", 10, "Number of concurrent workers")
-		delay     = flag.Duration("delay", 200*time.Millisecond, "Delay between requests")
-		timeout   = flag.Duration("timeout", 30*time.Second, "Request timeout")
-		depth     = flag.Int("depth", 1, "Crawling depth")
-		mongoURI  = flag.String("mongo", "mongodb://localhost:27017", "MongoDB connection URI")
-		mongoDB   = flag.String("db", "crawler", "MongoDB database name")
-		mongoCol  = flag.String("collection", "crawls", "MongoDB collection name")
-		saveOnly  = flag.Bool("save-only", false, "Only save to MongoDB, don't print JSON")
+		workers    = flag.Int("workers", 10, "Number of concurrent workers")
+		delay      = flag.Duration("delay", 200*time.Millisecond, "Delay between requests")
+		timeout    = flag.Duration("timeout", 30*time.Second, "Request timeout")
+		depth      = flag.Int("depth", 1, "Crawling depth")
+		mongoURI   = flag.String("mongo", "mongodb://localhost:27017", "MongoDB connection URI")
+		mongoDB    = flag.String("db", "crawler", "MongoDB database name")
+		mongoCol   = flag.String("collection", "crawls", "MongoDB collection name")
+		saveOnly   = flag.Bool("save-only", false, "Only save to MongoDB, don't print JSON")
+		rabbitMQURL = flag.String("rabbitmq", "amqp://localhost:5672", "RabbitMQ connection URL")
 	)
 	flag.Parse()
 
 	// Check if running in API mode
 	if *apiMode {
-		startAPIServer(*port, *mongoURI, *mongoDB)
+		startAPIServer(*port, *mongoURI, *mongoDB, *rabbitMQURL)
 		return
 	}
 	
@@ -76,6 +77,7 @@ func main() {
 		fmt.Println("  -mongo string      MongoDB URI (default mongodb://localhost:27017)")
 		fmt.Println("  -db string         MongoDB database (default crawler)")
 		fmt.Println("  -collection string MongoDB collection (default crawls)")
+		fmt.Println("  -rabbitmq string   RabbitMQ URL (default amqp://localhost:5672)")
 		fmt.Println("  -save-only         Only save to MongoDB, don't print JSON")
 		fmt.Println("Examples:")
 		fmt.Println("  CLI: go run main.go -workers=20 -depth=2 https://example.com")

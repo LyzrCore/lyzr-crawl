@@ -8,6 +8,12 @@ definitions:
       depth:
         example: 2
         type: integer
+      job_id:
+        example: my-custom-session-123
+        type: string
+      max_urls:
+        example: 1000
+        type: integer
       url:
         example: https://example.com
         type: string
@@ -73,6 +79,8 @@ definitions:
       progress:
         example: Starting crawl...
         type: string
+      request:
+        $ref: '#/definitions/main.CrawlRequest'
       result:
         $ref: '#/definitions/main.CrawlResult'
       status:
@@ -194,6 +202,39 @@ paths:
       summary: Get specific crawl result
       tags:
       - crawls
+  /jobs:
+    get:
+      consumes:
+      - application/json
+      description: Retrieves a list of recent jobs from the database
+      parameters:
+      - default: 10
+        description: Maximum number of results to return
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by job status (running, completed, failed)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.JobStatus'
+            type: array
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List recent jobs
+      tags:
+      - jobs
   /jobs/{id}:
     get:
       consumes:
