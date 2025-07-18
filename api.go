@@ -105,7 +105,154 @@ type URLFallback struct {
 	Error       string
 }
 
-// getRandomUserAgent returns a random realistic user agent
+// ScrapeOpsConfig holds configuration for ScrapeOps integration
+type ScrapeOpsConfig struct {
+	APIKey     string
+	UserAgents []string
+	Headers    []map[string]string
+	LastUpdate time.Time
+}
+
+// Global ScrapeOps configuration
+var scrapeOpsConfig = &ScrapeOpsConfig{
+	APIKey: "8d44ac41-0e85-42ca-8499-cc73eea0b672", // Your provided API key
+}
+
+// ScrapeOpsUserAgent represents user agent response from ScrapeOps
+type ScrapeOpsUserAgent struct {
+	UserAgent string `json:"user-agent"`
+}
+
+// ScrapeOpsUserAgentResponse represents the full response
+type ScrapeOpsUserAgentResponse struct {
+	Result []ScrapeOpsUserAgent `json:"result"`
+}
+
+// ScrapeOpsHeader represents browser header response from ScrapeOps
+type ScrapeOpsHeader map[string]string
+
+// ScrapeOpsHeaderResponse represents the full response
+type ScrapeOpsHeaderResponse struct {
+	Result []ScrapeOpsHeader `json:"result"`
+}
+
+// fetchScrapeOpsUserAgents fetches fresh user agents from ScrapeOps API
+func fetchScrapeOpsUserAgents() error {
+	url := fmt.Sprintf("https://headers.scrapeops.io/v1/user-agents?api_key=%s&num_results=50", scrapeOpsConfig.APIKey)
+	
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to fetch user agents: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("ScrapeOps API returned status %d", resp.StatusCode)
+	}
+	
+	var response ScrapeOpsUserAgentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return fmt.Errorf("failed to decode response: %v", err)
+	}
+	
+	// Extract user agents
+	userAgents := make([]string, len(response.Result))
+	for i, ua := range response.Result {
+		userAgents[i] = ua.UserAgent
+	}
+	
+	scrapeOpsConfig.UserAgents = userAgents
+	scrapeOpsConfig.LastUpdate = time.Now()
+	
+	log.Printf("Fetched %d user agents from ScrapeOps", len(userAgents))
+	return nil
+}
+
+// fetchScrapeOpsBrowserHeaders fetches fresh browser headers from ScrapeOps API
+func fetchScrapeOpsBrowserHeaders() error {
+	url := fmt.Sprintf("https://headers.scrapeops.io/v1/browser-headers?api_key=%s&num_results=20", scrapeOpsConfig.APIKey)
+	
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to fetch browser headers: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("ScrapeOps API returned status %d", resp.StatusCode)
+	}
+	
+	var response ScrapeOpsHeaderResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return fmt.Errorf("failed to decode response: %v", err)
+	}
+	
+	scrapeOpsConfig.Headers = make([]map[string]string, len(response.Result))
+	for i, header := range response.Result {
+		scrapeOpsConfig.Headers[i] = map[string]string(header)
+	}
+	scrapeOpsConfig.LastUpdate = time.Now()
+	
+	log.Printf("Fetched %d browser header sets from ScrapeOps", len(response.Result))
+	return nil
+}
+
+// initScrapeOpsHeaders initializes ScrapeOps headers and user agents
+func initScrapeOpsHeaders() {
+	// Fetch user agents
+	if err := fetchScrapeOpsUserAgents(); err != nil {
+		log.Printf("Failed to fetch ScrapeOps user agents: %v", err)
+		log.Println("Falling back to static user agents")
+	}
+	
+	// Fetch browser headers
+	if err := fetchScrapeOpsBrowserHeaders(); err != nil {
+		log.Printf("Failed to fetch ScrapeOps browser headers: %v", err)
+		log.Println("Falling back to static headers")
+	}
+}
+
+// getScrapeOpsUserAgent returns a random user agent from ScrapeOps or fallback
+func getScrapeOpsUserAgent() string {
+	// Refresh if data is older than 1 hour
+	if time.Since(scrapeOpsConfig.LastUpdate) > time.Hour {
+		go initScrapeOpsHeaders() // Refresh in background
+	}
+	
+	if len(scrapeOpsConfig.UserAgents) > 0 {
+		return scrapeOpsConfig.UserAgents[int(time.Now().UnixNano())%len(scrapeOpsConfig.UserAgents)]
+	}
+	
+	// Fallback to static user agents if ScrapeOps is unavailable
+	return getRandomUserAgent()
+}
+
+// getScrapeOpsBrowserHeaders returns random browser headers from ScrapeOps or fallback
+func getScrapeOpsBrowserHeaders() map[string]string {
+	if len(scrapeOpsConfig.Headers) > 0 {
+		return scrapeOpsConfig.Headers[int(time.Now().UnixNano())%len(scrapeOpsConfig.Headers)]
+	}
+	
+	// Fallback to basic headers
+	return map[string]string{
+		"User-Agent":                getRandomUserAgent(),
+		"Accept":                   "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+		"Accept-Language":          "en-US,en;q=0.9",
+		"Accept-Encoding":          "gzip, deflate, br",
+		"Cache-Control":            "no-cache",
+		"Pragma":                   "no-cache",
+		"Sec-Fetch-Dest":           "document",
+		"Sec-Fetch-Mode":           "navigate",
+		"Sec-Fetch-Site":           "none",
+		"Sec-Fetch-User":           "?1",
+		"Upgrade-Insecure-Requests": "1",
+		"Connection":               "keep-alive",
+	}
+}
+
+// getRandomUserAgent returns a random realistic user agent (fallback)
 func getRandomUserAgent() string {
 	userAgents := []string{
 		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -123,24 +270,45 @@ func getRandomUserAgent() string {
 
 // setBrowserHeaders sets realistic browser headers to bypass bot detection
 func setBrowserHeaders(req *http.Request) {
-	req.Header.Set("User-Agent", getRandomUserAgent())
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Pragma", "no-cache")
-	req.Header.Set("Sec-Fetch-Dest", "document")
-	req.Header.Set("Sec-Fetch-Mode", "navigate")
-	req.Header.Set("Sec-Fetch-Site", "none")
-	req.Header.Set("Sec-Fetch-User", "?1")
-	req.Header.Set("Upgrade-Insecure-Requests", "1")
-	req.Header.Set("Connection", "keep-alive")
+	// Use ScrapeOps headers for maximum stealth
+	headers := getScrapeOpsBrowserHeaders()
+	
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 }
 
-// checkURLAccessibility performs a HEAD request to check if a URL is accessible
+// checkURLAccessibility performs a request to check if a URL is accessible
 func checkURLAccessibility(urlStr string) error {
+	// For very strict sites like OpenAI, skip the accessibility check
+	// and try crawling directly with Colly's more sophisticated approach
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return err
+	}
+	
+	// List of sites known to be very strict - skip pre-check for these
+	strictSites := []string{
+		"openai.com",
+		"www.openai.com",
+		"claude.ai",
+		"www.claude.ai",
+		"chatgpt.com",
+		"www.chatgpt.com",
+	}
+	
+	for _, site := range strictSites {
+		if strings.Contains(parsed.Host, site) || parsed.Host == site {
+			// Skip the check for strict sites, let Colly handle it
+			return nil
+		}
+	}
+	
+	// Add random delay to appear more human-like
+	time.Sleep(time.Duration(500+int(time.Now().UnixNano())%1000) * time.Millisecond)
+	
 	client := &http.Client{
-		Timeout: 15 * time.Second,
+		Timeout: 20 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// Allow up to 5 redirects
 			if len(via) >= 5 {
@@ -152,7 +320,7 @@ func checkURLAccessibility(urlStr string) error {
 		},
 	}
 	
-	// Try GET request instead of HEAD as some sites block HEAD requests
+	// Try GET request with minimal response reading
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
@@ -161,6 +329,10 @@ func checkURLAccessibility(urlStr string) error {
 	// Set realistic browser headers to bypass bot detection
 	setBrowserHeaders(req)
 	
+	// Add some additional stealth headers
+	req.Header.Set("DNT", "1")
+	req.Header.Set("Sec-GPC", "1")
+	
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -168,13 +340,17 @@ func checkURLAccessibility(urlStr string) error {
 	defer resp.Body.Close()
 	
 	// Consider 2xx and 3xx status codes as accessible
-	// Also accept some 4xx codes that might still allow crawling
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		return nil
 	}
 	
-	// Some sites return 403 but might still be crawlable with proper headers
+	// For 403, still return nil for strict sites as Colly might handle it better
 	if resp.StatusCode == 403 {
+		for _, site := range strictSites {
+			if strings.Contains(parsed.Host, site) || parsed.Host == site {
+				return nil // Let Colly try anyway
+			}
+		}
 		return fmt.Errorf("HTTP 403: Forbidden (may need different approach)")
 	}
 	
@@ -328,10 +504,15 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 	}
 
 	// Publish initial setup progress
+	stealthStatus := "basic headers"
+	if len(scrapeOpsConfig.UserAgents) > 0 {
+		stealthStatus = fmt.Sprintf("ScrapeOps stealth (%d user agents, %d header sets)", len(scrapeOpsConfig.UserAgents), len(scrapeOpsConfig.Headers))
+	}
+	
 	publishCrawlEvent(CrawlEvent{
 		Type:      "progress",
 		JobID:     jobID,
-		Progress:  fmt.Sprintf("Setting up crawler for %s (depth: %d, workers: %d)", targetURL, depth, workers),
+		Progress:  fmt.Sprintf("🚀 Setting up stealth crawler for %s (depth: %d, workers: %d, %s)", targetURL, depth, workers, stealthStatus),
 		Timestamp: time.Now(),
 	})
 
@@ -356,6 +537,13 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 			Progress:  fmt.Sprintf("📍 Using fallback URL: %s (original: %s)", actualURL, targetURL),
 			Timestamp: time.Now(),
 		})
+	} else {
+		publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("✅ Direct access confirmed for %s", actualURL),
+			Timestamp: time.Now(),
+		})
 	}
 
 	// Parse the actual URL to get the base domain
@@ -364,7 +552,7 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 		return nil, fmt.Errorf("error parsing actual URL: %v", err)
 	}
 
-	// Create async crawler with stealth settings
+	// Create async crawler with maximum stealth settings
 	c := colly.NewCollector(
 		colly.Async(true), // Enable async mode
 	)
@@ -372,13 +560,18 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 	// BYPASS ROBOTS.TXT - This ignores robots.txt entirely
 	c.IgnoreRobotsTxt = true
 	
-	// Configure limits for async operation
+	// Configure limits for async operation with random delays
+	baseDelay := delay
 	c.Limit(&colly.LimitRule{
 		DomainGlob:  "*",
 		Parallelism: workers,
-		Delay:       delay,
+		Delay:       baseDelay,
+		RandomDelay: baseDelay, // Add randomness to delays
 	})
-	c.SetRequestTimeout(45 * time.Second) // Longer timeout for stealth
+	c.SetRequestTimeout(60 * time.Second) // Even longer timeout for very strict sites
+	
+	// Add additional stealth settings
+	c.UserAgent = getScrapeOpsUserAgent() // Set a base user agent
 
 	// Allow both www and non-www versions of the domain
 	baseDomain := parsedURL.Host
@@ -390,45 +583,6 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 	}
 	c.AllowedDomains = allowedDomains
 
-	// Set realistic browser headers for stealth crawling
-	c.OnRequest(func(r *colly.Request) {
-		if stopped {
-			r.Abort()
-			return
-		}
-		
-		// Set realistic browser headers to mimic real users
-		r.Headers.Set("User-Agent", getRandomUserAgent())
-		r.Headers.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8")
-		r.Headers.Set("Accept-Language", "en-US,en;q=0.9")
-		r.Headers.Set("Accept-Encoding", "gzip, deflate, br")
-		r.Headers.Set("Cache-Control", "no-cache")
-		r.Headers.Set("Pragma", "no-cache")
-		r.Headers.Set("Sec-Fetch-Dest", "document")
-		r.Headers.Set("Sec-Fetch-Mode", "navigate") 
-		r.Headers.Set("Sec-Fetch-Site", "cross-site")
-		r.Headers.Set("Sec-Fetch-User", "?1")
-		r.Headers.Set("Upgrade-Insecure-Requests", "1")
-		r.Headers.Set("Connection", "keep-alive")
-		
-		// Add referer for subsequent requests to look more natural
-		if r.Depth > 0 {
-			r.Headers.Set("Referer", actualURL)
-			r.Headers.Set("Sec-Fetch-Site", "same-origin")
-		}
-		
-		count := atomic.AddInt64(&pagesCrawled, 1)
-		
-		// Publish progress event (async, non-blocking)
-		go publishCrawlEvent(CrawlEvent{
-			Type:      "progress",
-			JobID:     jobID,
-			Progress:  fmt.Sprintf("Crawling page %d at depth %d: %s", count, r.Depth, r.URL.String()),
-			Timestamp: time.Now(),
-			PageCount: int(count),
-		})
-	})
-
 	// Thread-safe URL tracking
 	var (
 		mu           sync.RWMutex
@@ -437,6 +591,48 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 		pagesCrawled int64
 		stopped      = false
 	)
+
+	// Set realistic browser headers for stealth crawling using ScrapeOps
+	c.OnRequest(func(r *colly.Request) {
+		if stopped {
+			r.Abort()
+			return
+		}
+		
+		// Use ScrapeOps headers for maximum stealth
+		headers := getScrapeOpsBrowserHeaders()
+		for key, value := range headers {
+			r.Headers.Set(key, value)
+		}
+		
+		// Add additional stealth headers
+		r.Headers.Set("DNT", "1")
+		r.Headers.Set("Sec-GPC", "1")
+		r.Headers.Set("X-Requested-With", "")
+		
+		// Override some headers for better stealth
+		r.Headers.Set("Sec-Fetch-Site", "cross-site")
+		if r.Depth > 0 {
+			r.Headers.Set("Referer", actualURL)
+			r.Headers.Set("Sec-Fetch-Site", "same-origin")
+		}
+		
+		// Add random small delay between requests to appear more human
+		if r.Depth > 0 {
+			time.Sleep(time.Duration(100+int(time.Now().UnixNano())%200) * time.Millisecond)
+		}
+		
+		count := atomic.AddInt64(&pagesCrawled, 1)
+		
+		// Publish progress event (async, non-blocking)
+		go publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("🔍 Crawling page %d at depth %d: %s", count, r.Depth, r.URL.String()),
+			Timestamp: time.Now(),
+			PageCount: int(count),
+		})
+	})
 	
 	startTime := time.Now()
 
@@ -1180,6 +1376,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // startAPIServer starts the REST API server
 func startAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
+	// Initialize ScrapeOps for stealth headers
+	log.Println("🔧 Initializing ScrapeOps stealth headers...")
+	initScrapeOpsHeaders()
+	
 	// Initialize MongoDB
 	if err := initMongoDB(mongoURI, dbName); err != nil {
 		log.Printf("MongoDB initialization failed: %v", err)
