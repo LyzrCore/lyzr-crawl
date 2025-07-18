@@ -97,6 +97,165 @@ var (
 	}
 )
 
+// URLFallback contains information about URL fallback attempts
+type URLFallback struct {
+	OriginalURL string
+	FallbackURL string
+	Success     bool
+	Error       string
+}
+
+// checkURLAccessibility performs a HEAD request to check if a URL is accessible
+func checkURLAccessibility(urlStr string) error {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Allow up to 3 redirects
+			if len(via) >= 3 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
+	
+	req, err := http.NewRequest("HEAD", urlStr, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+	
+	// Set a user agent to appear like a real browser
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Go-Colly-Crawler/1.0)")
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	
+	// Consider 2xx and 3xx status codes as accessible
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return nil
+	}
+	
+	return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+}
+
+// generateFallbackURLs generates alternative URLs to try if the original fails
+func generateFallbackURLs(originalURL string) []string {
+	parsed, err := url.Parse(originalURL)
+	if err != nil {
+		return []string{}
+	}
+	
+	var fallbacks []string
+	host := parsed.Host
+	
+	// Try www variant if original doesn't have www
+	if !strings.HasPrefix(host, "www.") {
+		wwwURL := *parsed
+		wwwURL.Host = "www." + host
+		fallbacks = append(fallbacks, wwwURL.String())
+	}
+	
+	// Try non-www variant if original has www
+	if strings.HasPrefix(host, "www.") {
+		nonWwwURL := *parsed
+		nonWwwURL.Host = host[4:] // Remove "www."
+		fallbacks = append(fallbacks, nonWwwURL.String())
+	}
+	
+	// Try HTTPS if original is HTTP
+	if parsed.Scheme == "http" {
+		httpsURL := *parsed
+		httpsURL.Scheme = "https"
+		fallbacks = append(fallbacks, httpsURL.String())
+		
+		// Also try HTTPS with www/non-www variants
+		if !strings.HasPrefix(host, "www.") {
+			httpsWwwURL := httpsURL
+			httpsWwwURL.Host = "www." + host
+			fallbacks = append(fallbacks, httpsWwwURL.String())
+		} else {
+			httpsNonWwwURL := httpsURL
+			httpsNonWwwURL.Host = host[4:]
+			fallbacks = append(fallbacks, httpsNonWwwURL.String())
+		}
+	}
+	
+	return fallbacks
+}
+
+// findAccessibleURL tries the original URL and fallbacks, returns the first accessible one
+func findAccessibleURL(originalURL string, jobID string) (string, *URLFallback) {
+	fallbackInfo := &URLFallback{
+		OriginalURL: originalURL,
+		FallbackURL: originalURL,
+		Success:     false,
+	}
+	
+	// First try the original URL
+	err := checkURLAccessibility(originalURL)
+	if err == nil {
+		fallbackInfo.Success = true
+		return originalURL, fallbackInfo
+	}
+	
+	// Store the original error
+	fallbackInfo.Error = err.Error()
+	
+	// Publish that we're trying fallbacks
+	if jobID != "" {
+		publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("⚠️ Original URL failed (%v), trying fallback URLs...", err),
+			Timestamp: time.Now(),
+		})
+	}
+	
+	// Try fallback URLs
+	fallbacks := generateFallbackURLs(originalURL)
+	for _, fallbackURL := range fallbacks {
+		if jobID != "" {
+			publishCrawlEvent(CrawlEvent{
+				Type:      "progress",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("🔄 Trying fallback: %s", fallbackURL),
+				Timestamp: time.Now(),
+			})
+		}
+		
+		err := checkURLAccessibility(fallbackURL)
+		if err == nil {
+			fallbackInfo.FallbackURL = fallbackURL
+			fallbackInfo.Success = true
+			
+			if jobID != "" {
+				publishCrawlEvent(CrawlEvent{
+					Type:      "progress",
+					JobID:     jobID,
+					Progress:  fmt.Sprintf("✅ Fallback successful! Using: %s", fallbackURL),
+					Timestamp: time.Now(),
+				})
+			}
+			
+			return fallbackURL, fallbackInfo
+		}
+		
+		if jobID != "" {
+			publishCrawlEvent(CrawlEvent{
+				Type:      "progress",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("❌ Fallback failed: %s (%v)", fallbackURL, err),
+				Timestamp: time.Now(),
+			})
+		}
+	}
+	
+	// All URLs failed
+	return originalURL, fallbackInfo
+}
+
 // initMongoDB initializes the MongoDB connection
 func initMongoDB(mongoURI, dbName string) error {
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(mongoURI))
@@ -127,12 +286,6 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 		delay = 200 * time.Millisecond
 	}
 
-	// Parse the target URL to get the base domain
-	parsedURL, err := url.Parse(targetURL)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing URL: %v", err)
-	}
-
 	// Publish initial setup progress
 	publishCrawlEvent(CrawlEvent{
 		Type:      "progress",
@@ -140,6 +293,35 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 		Progress:  fmt.Sprintf("Setting up crawler for %s (depth: %d, workers: %d)", targetURL, depth, workers),
 		Timestamp: time.Now(),
 	})
+
+	// Try to find an accessible URL (original or fallback)
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  "🔍 Checking URL accessibility...",
+		Timestamp: time.Now(),
+	})
+
+	actualURL, fallbackInfo := findAccessibleURL(targetURL, jobID)
+	if !fallbackInfo.Success {
+		return nil, fmt.Errorf("URL and all fallbacks are inaccessible. Original error: %v", fallbackInfo.Error)
+	}
+
+	// If we used a fallback, log it
+	if actualURL != targetURL {
+		publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("📍 Using fallback URL: %s (original: %s)", actualURL, targetURL),
+			Timestamp: time.Now(),
+		})
+	}
+
+	// Parse the actual URL to get the base domain
+	parsedURL, err := url.Parse(actualURL)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing actual URL: %v", err)
+	}
 
 	// Create async crawler
 	c := colly.NewCollector(
@@ -308,12 +490,12 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 	publishCrawlEvent(CrawlEvent{
 		Type:      "progress",
 		JobID:     jobID,
-		Progress:  fmt.Sprintf("Starting to crawl %s...", targetURL),
+		Progress:  fmt.Sprintf("Starting to crawl %s...", actualURL),
 		Timestamp: time.Now(),
 	})
 
-	// Visit initial URL
-	if err := c.Visit(targetURL); err != nil {
+	// Visit initial URL (using the accessible URL)
+	if err := c.Visit(actualURL); err != nil {
 		return nil, fmt.Errorf("error visiting URL: %v", err)
 	}
 
@@ -332,7 +514,7 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 
 	// Create structured result
 	result := &CrawlResult{
-		TargetURL:     targetURL,
+		TargetURL:     actualURL, // Use the actually crawled URL
 		CrawledAt:     time.Now(),
 		Duration:      duration.String(),
 		TotalURLs:     finalCount,
