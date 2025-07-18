@@ -262,4 +262,18 @@ paths:
       summary: Get crawl job status
       tags:
       - jobs
+  /ws/{id}:
+    get:
+      description: Establishes a WebSocket connection to receive real-time updates
+        for a specific crawl job
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses: {}
+      summary: Connect to live crawl updates
+      tags:
+      - websocket
 swagger: "2.0"

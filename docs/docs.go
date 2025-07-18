@@ -260,6 +260,25 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/ws/{id}": {
+            "get": {
+                "description": "Establishes a WebSocket connection to receive real-time updates for a specific crawl job",
+                "tags": [
+                    "websocket"
+                ],
+                "summary": "Connect to live crawl updates",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Job ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {}
+            }
         }
     },
     "definitions": {

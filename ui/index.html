@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Crawler Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .header p {
+            color: #7f8c8d;
+            font-size: 1.1em;
+        }
+
+        .crawl-form {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        .btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+
+        .btn:hover {
+            background: #2980b9;
+        }
+
+        .btn:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .status-card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .status-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .status-header h3 {
+            color: #2c3e50;
+            font-size: 1.5em;
+        }
+
+        .connection-status {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .connected {
+            background: #d5f4e6;
+            color: #27ae60;
+        }
+
+        .disconnected {
+            background: #fadbd8;
+            color: #e74c3c;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat {
+            text-align: center;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+            color: #3498db;
+        }
+
+        .stat-label {
+            color: #7f8c8d;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .events-container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .events-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .events-header h3 {
+            color: #2c3e50;
+        }
+
+        .clear-btn {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .events-list {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            padding: 15px;
+            background: #fafbfc;
+        }
+
+        .event {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            border-left: 4px solid;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+        }
+
+        .event-url_discovered {
+            background: #e8f5e8;
+            border-color: #27ae60;
+        }
+
+        .event-progress {
+            background: #e3f2fd;
+            border-color: #3498db;
+        }
+
+        .event-error {
+            background: #fadbd8;
+            border-color: #e74c3c;
+        }
+
+        .event-completed {
+            background: #d5f4e6;
+            border-color: #27ae60;
+        }
+
+        .event-connected {
+            background: #f0f8ff;
+            border-color: #3498db;
+        }
+
+        .event-timestamp {
+            color: #7f8c8d;
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+
+        .event-content {
+            color: #2c3e50;
+        }
+
+        .url-link {
+            color: #3498db;
+            text-decoration: none;
+        }
+
+        .url-link:hover {
+            text-decoration: underline;
+        }
+
+        .job-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 14px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🕷️ Web Crawler Dashboard</h1>
+            <p>Real-time web crawling with live URL discovery</p>
+        </div>
+
+        <div class="crawl-form">
+            <h3 style="margin-bottom: 20px; color: #2c3e50;">Start New Crawl</h3>
+            <form id="crawlForm">
+                <div class="form-group">
+                    <label for="url">Target URL</label>
+                    <input type="url" id="url" placeholder="https://example.com" required>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="depth">Crawl Depth</label>
+                        <input type="number" id="depth" value="2" min="1" max="5">
+                    </div>
+                    <div class="form-group">
+                        <label for="workers">Workers</label>
+                        <input type="number" id="workers" value="10" min="1" max="50">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="delay">Delay</label>
+                        <input type="text" id="delay" value="200ms" placeholder="200ms">
+                    </div>
+                    <div class="form-group">
+                        <label for="maxUrls">Max URLs</label>
+                        <input type="number" id="maxUrls" value="1000" min="1" max="5000">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="jobId">Custom Job ID (optional)</label>
+                    <input type="text" id="jobId" placeholder="my-crawl-session-123">
+                </div>
+                
+                <button type="submit" class="btn" id="startBtn">Start Crawling</button>
+            </form>
+        </div>
+
+        <div class="status-card hidden" id="statusCard">
+            <div class="status-header">
+                <h3>Crawl Status</h3>
+                <span class="connection-status disconnected" id="connectionStatus">Disconnected</span>
+            </div>
+            
+            <div class="job-info" id="jobInfo"></div>
+            
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-value" id="urlCount">0</div>
+                    <div class="stat-label">URLs Found</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="pageCount">0</div>
+                    <div class="stat-label">Pages Crawled</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="errorCount">0</div>
+                    <div class="stat-label">Errors</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="duration">0s</div>
+                    <div class="stat-label">Duration</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="events-container hidden" id="eventsContainer">
+            <div class="events-header">
+                <h3>Live Events</h3>
+                <button class="clear-btn" id="clearEvents">Clear Events</button>
+            </div>
+            <div class="events-list" id="eventsList"></div>
+        </div>
+    </div>
+
+    <script>
+        class CrawlerUI {
+            constructor() {
+                this.apiUrl = 'http://localhost:8080';
+                this.ws = null;
+                this.currentJobId = null;
+                this.startTime = null;
+                this.durationTimer = null;
+                this.stats = {
+                    urlCount: 0,
+                    pageCount: 0,
+                    errorCount: 0
+                };
+                
+                this.initEventListeners();
+            }
+
+            initEventListeners() {
+                document.getElementById('crawlForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.startCrawl();
+                });
+
+                document.getElementById('clearEvents').addEventListener('click', () => {
+                    document.getElementById('eventsList').innerHTML = '';
+                });
+            }
+
+            async startCrawl() {
+                const formData = {
+                    url: document.getElementById('url').value,
+                    depth: parseInt(document.getElementById('depth').value),
+                    workers: parseInt(document.getElementById('workers').value),
+                    delay: document.getElementById('delay').value,
+                    max_urls: parseInt(document.getElementById('maxUrls').value),
+                    job_id: document.getElementById('jobId').value || undefined
+                };
+
+                const startBtn = document.getElementById('startBtn');
+                startBtn.disabled = true;
+                startBtn.textContent = 'Starting...';
+
+                try {
+                    const response = await fetch(`${this.apiUrl}/crawl`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(formData)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const result = await response.json();
+                    this.currentJobId = result.job_id;
+                    this.startTime = new Date();
+                    
+                    this.showJobInfo(formData, result);
+                    this.connectWebSocket();
+                    this.resetStats();
+                    this.startDurationTimer();
+
+                } catch (error) {
+                    alert(`Failed to start crawl: ${error.message}`);
+                    console.error('Crawl start error:', error);
+                } finally {
+                    startBtn.disabled = false;
+                    startBtn.textContent = 'Start Crawling';
+                }
+            }
+
+            showJobInfo(request, response) {
+                const jobInfo = document.getElementById('jobInfo');
+                jobInfo.innerHTML = `
+                    <strong>Job ID:</strong> ${response.job_id}<br>
+                    <strong>Status:</strong> ${response.status}<br>
+                    <strong>Target:</strong> ${request.url}<br>
+                    <strong>Settings:</strong> Depth: ${request.depth}, Workers: ${request.workers}, Max URLs: ${request.max_urls}
+                `;
+
+                document.getElementById('statusCard').classList.remove('hidden');
+                document.getElementById('eventsContainer').classList.remove('hidden');
+            }
+
+            connectWebSocket() {
+                const wsUrl = `ws://localhost:8080/ws/${this.currentJobId}`;
+                
+                this.ws = new WebSocket(wsUrl);
+                
+                this.ws.onopen = () => {
+                    this.updateConnectionStatus(true);
+                    console.log('WebSocket connected');
+                };
+
+                this.ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    this.handleWebSocketMessage(data);
+                };
+
+                this.ws.onclose = () => {
+                    this.updateConnectionStatus(false);
+                    console.log('WebSocket disconnected');
+                };
+
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.updateConnectionStatus(false);
+                };
+            }
+
+            handleWebSocketMessage(data) {
+                this.addEvent(data);
+                this.updateStats(data);
+            }
+
+            addEvent(data) {
+                const eventsList = document.getElementById('eventsList');
+                const eventDiv = document.createElement('div');
+                eventDiv.className = `event event-${data.type}`;
+                
+                const timestamp = new Date(data.timestamp).toLocaleTimeString();
+                let content = data.progress || '';
+                
+                if (data.type === 'url_discovered' && data.url) {
+                    content = `Found URL: <a href="${data.url}" target="_blank" class="url-link">${data.url}</a>`;
+                    if (data.total) content += ` (Total: ${data.total})`;
+                }
+                
+                eventDiv.innerHTML = `
+                    <div class="event-timestamp">${timestamp}</div>
+                    <div class="event-content">${content}</div>
+                `;
+                
+                eventsList.insertBefore(eventDiv, eventsList.firstChild);
+                
+                // Keep only last 100 events
+                while (eventsList.children.length > 100) {
+                    eventsList.removeChild(eventsList.lastChild);
+                }
+            }
+
+            updateStats(data) {
+                if (data.total !== undefined) {
+                    this.stats.urlCount = data.total;
+                    document.getElementById('urlCount').textContent = this.stats.urlCount;
+                }
+                
+                if (data.page_count !== undefined) {
+                    this.stats.pageCount = data.page_count;
+                    document.getElementById('pageCount').textContent = this.stats.pageCount;
+                }
+                
+                if (data.type === 'error') {
+                    this.stats.errorCount++;
+                    document.getElementById('errorCount').textContent = this.stats.errorCount;
+                }
+                
+                // Stop timer when crawl completes
+                if (data.type === 'completed') {
+                    this.stopDurationTimer();
+                }
+            }
+
+            updateConnectionStatus(connected) {
+                const status = document.getElementById('connectionStatus');
+                if (connected) {
+                    status.textContent = 'Connected';
+                    status.className = 'connection-status connected';
+                } else {
+                    status.textContent = 'Disconnected';
+                    status.className = 'connection-status disconnected';
+                }
+            }
+
+            resetStats() {
+                this.stats = { urlCount: 0, pageCount: 0, errorCount: 0 };
+                document.getElementById('urlCount').textContent = '0';
+                document.getElementById('pageCount').textContent = '0';
+                document.getElementById('errorCount').textContent = '0';
+                document.getElementById('duration').textContent = '0s';
+            }
+
+            startDurationTimer() {
+                // Clear existing timer if any
+                this.stopDurationTimer();
+                
+                this.durationTimer = setInterval(() => {
+                    if (this.startTime) {
+                        const duration = Math.floor((new Date() - this.startTime) / 1000);
+                        document.getElementById('duration').textContent = `${duration}s`;
+                    }
+                }, 1000);
+                
+                // Stop timer when WebSocket closes
+                if (this.ws) {
+                    this.ws.addEventListener('close', () => this.stopDurationTimer());
+                }
+            }
+
+            stopDurationTimer() {
+                if (this.durationTimer) {
+                    clearInterval(this.durationTimer);
+                    this.durationTimer = null;
+                }
+            }
+        }
+
+        // Initialize the UI when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new CrawlerUI();
+        });
+    </script>
+</body>
+</html>

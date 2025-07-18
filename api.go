@@ -10,10 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gocolly/colly/v2"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 	httpSwagger "github.com/swaggo/http-swagger"
 	_ "crawler/docs" // This line is required for Swagger
 	"go.mongodb.org/mongo-driver/bson"
@@ -66,6 +68,18 @@ type JobStatus struct {
 	Request   *CrawlRequest        `json:"request,omitempty" bson:"request,omitempty"`
 }
 
+// WebSocketMessage represents a real-time update message sent to WebSocket clients
+type WebSocketMessage struct {
+	Type      string    `json:"type"`             // "progress", "url_discovered", "completed", "connected", "error"
+	JobID     string    `json:"job_id"`
+	URL       string    `json:"url,omitempty"`
+	Depth     int       `json:"depth,omitempty"`
+	Progress  string    `json:"progress,omitempty"`   // Human-readable progress message
+	Timestamp time.Time `json:"timestamp"`
+	Total     int       `json:"total,omitempty"`      // Total URLs found
+	PageCount int       `json:"page_count,omitempty"` // Total pages crawled
+	Error     string    `json:"error,omitempty"`
+}
 
 // Global variables for the API server
 var (
@@ -74,6 +88,13 @@ var (
 	jobsCollection  *mongo.Collection
 	activeJobs      = make(map[string]*JobStatus)
 	jobsMutex       sync.RWMutex
+	
+	// WebSocket upgrader
+	upgrader = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true // Allow all origins in development
+		},
+	}
 )
 
 // initMongoDB initializes the MongoDB connection
@@ -98,10 +119,247 @@ func initMongoDB(mongoURI, dbName string) error {
 	return nil
 }
 
-// crawlWebsiteWithEvents performs async crawling with events
+// crawlWebsiteWithEvents performs async crawling with real-time events
 func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr string, maxURLs int, jobID string) (*CrawlResult, error) {
-	// Just use the regular crawler function - no need for complex async handling
-	return crawlWebsite(targetURL, depth, workers, delayStr)
+	// Parse delay
+	delay, err := time.ParseDuration(delayStr)
+	if err != nil {
+		delay = 200 * time.Millisecond
+	}
+
+	// Parse the target URL to get the base domain
+	parsedURL, err := url.Parse(targetURL)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing URL: %v", err)
+	}
+
+	// Publish initial setup progress
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  fmt.Sprintf("Setting up crawler for %s (depth: %d, workers: %d)", targetURL, depth, workers),
+		Timestamp: time.Now(),
+	})
+
+	// Create async crawler
+	c := colly.NewCollector(
+		colly.Async(true), // Enable async mode
+	)
+	
+	// Configure limits for async operation
+	c.Limit(&colly.LimitRule{
+		DomainGlob:  "*",
+		Parallelism: workers,
+		Delay:       delay,
+	})
+	c.SetRequestTimeout(30 * time.Second)
+
+	// Allow both www and non-www versions of the domain
+	baseDomain := parsedURL.Host
+	allowedDomains := []string{baseDomain}
+	if strings.HasPrefix(baseDomain, "www.") {
+		allowedDomains = append(allowedDomains, baseDomain[4:])
+	} else {
+		allowedDomains = append(allowedDomains, "www."+baseDomain)
+	}
+	c.AllowedDomains = allowedDomains
+
+	// Set user agent to be respectful
+	c.UserAgent = "Go-Colly-Crawler/1.0"
+
+	// Thread-safe URL tracking
+	var (
+		mu           sync.RWMutex
+		foundURLs    = make(map[string]bool)
+		urlList      []string
+		pagesCrawled int64
+		stopped      = false
+	)
+	
+	startTime := time.Now()
+
+	// Publish crawler ready progress
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  "Crawler initialized, starting to crawl...",
+		Timestamp: time.Now(),
+	})
+
+	// Async link discovery with real-time events
+	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
+		link := e.Attr("href")
+		if link == "" || shouldSkipURL(link) {
+			return
+		}
+
+		// Convert to absolute URL
+		absoluteURL := e.Request.AbsoluteURL(link)
+		linkURL, err := url.Parse(absoluteURL)
+		if err != nil {
+			return
+		}
+
+		// Check if URL is from allowed domain
+		isAllowed := false
+		for _, domain := range allowedDomains {
+			if linkURL.Host == domain {
+				isAllowed = true
+				break
+			}
+		}
+		
+		if isAllowed {
+			// Clean the URL
+			cleanURL := linkURL.Scheme + "://" + linkURL.Host + linkURL.Path
+			if linkURL.RawQuery != "" {
+				cleanURL += "?" + linkURL.RawQuery
+			}
+			
+			// Thread-safe URL processing
+			mu.Lock()
+			if !foundURLs[cleanURL] && len(urlList) < maxURLs && !stopped {
+				foundURLs[cleanURL] = true
+				urlList = append(urlList, cleanURL)
+				currentTotal := len(urlList)
+				
+				// Check if limit reached
+				if currentTotal >= maxURLs {
+					stopped = true
+					publishCrawlEvent(CrawlEvent{
+						Type:      "progress",
+						JobID:     jobID,
+						Progress:  fmt.Sprintf("⚠️ URL limit reached! Stopping at %d URLs", maxURLs),
+						Timestamp: time.Now(),
+					})
+				} else {
+					// Publish URL discovery event (async, non-blocking)
+					go publishCrawlEvent(CrawlEvent{
+						Type:      "url_discovered",
+						JobID:     jobID,
+						URL:       cleanURL,
+						Depth:     e.Request.Depth,
+						Timestamp: time.Now(),
+						Total:     currentTotal,
+					})
+				}
+				
+				// Queue next visit if within depth and not stopped
+				if e.Request.Depth < depth && !stopped {
+					go func() {
+						if !stopped {
+							e.Request.Visit(cleanURL)
+						}
+					}()
+				}
+			}
+			mu.Unlock()
+		}
+	})
+
+	// Request tracking with progress events
+	c.OnRequest(func(r *colly.Request) {
+		if stopped {
+			r.Abort()
+			return
+		}
+		
+		count := atomic.AddInt64(&pagesCrawled, 1)
+		
+		// Publish progress event (async, non-blocking)
+		go publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("Crawling page %d at depth %d: %s", count, r.Depth, r.URL.String()),
+			Timestamp: time.Now(),
+			PageCount: int(count),
+		})
+	})
+
+	// Response tracking
+	c.OnResponse(func(r *colly.Response) {
+		mu.RLock()
+		currentTotal := len(urlList)
+		mu.RUnlock()
+		
+		// Publish progress event (async, non-blocking)
+		go publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("Processed %s - Found %d URLs so far", r.Request.URL.String(), currentTotal),
+			Timestamp: time.Now(),
+			Total:     currentTotal,
+		})
+	})
+
+	// Error handling
+	c.OnError(func(r *colly.Response, err error) {
+		// Publish error event (async, non-blocking)
+		go publishCrawlEvent(CrawlEvent{
+			Type:      "error",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("❌ Error crawling %s: %v", r.Request.URL.String(), err),
+			Timestamp: time.Now(),
+			Error:     err.Error(),
+		})
+	})
+
+	// Start crawling
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  fmt.Sprintf("Starting to crawl %s...", targetURL),
+		Timestamp: time.Now(),
+	})
+
+	// Visit initial URL
+	if err := c.Visit(targetURL); err != nil {
+		return nil, fmt.Errorf("error visiting URL: %v", err)
+	}
+
+	// Wait for async crawler to complete
+	c.Wait()
+
+	// Calculate final stats
+	mu.RLock()
+	finalURLList := make([]string, len(urlList))
+	copy(finalURLList, urlList)
+	finalCount := len(urlList)
+	mu.RUnlock()
+	
+	duration := time.Since(startTime)
+	urlsPerSecond := float64(finalCount) / duration.Seconds()
+
+	// Create structured result
+	result := &CrawlResult{
+		TargetURL:     targetURL,
+		CrawledAt:     time.Now(),
+		Duration:      duration.String(),
+		TotalURLs:     finalCount,
+		URLsPerSecond: fmt.Sprintf("%.2f", urlsPerSecond),
+		Settings: CrawlSettings{
+			Workers: workers,
+			Delay:   delayStr,
+			Depth:   depth,
+		},
+		URLs: finalURLList,
+	}
+
+	// Send final completion message
+	completionMessage := fmt.Sprintf("✅ Crawling completed! Found %d URLs in %s (%.2f URLs/sec)", finalCount, duration.String(), urlsPerSecond)
+	if finalCount >= maxURLs {
+		completionMessage = fmt.Sprintf("✅ Crawling completed! Found %d URLs (limit reached) in %s (%.2f URLs/sec)", finalCount, duration.String(), urlsPerSecond)
+	}
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "completed",
+		JobID:     jobID,
+		Progress:  completionMessage,
+		Timestamp: time.Now(),
+		Total:     finalCount,
+	})
+
+	return result, nil
 }
 
 // crawlWebsite performs the actual crawling (moved from main function)
@@ -569,6 +827,112 @@ func handleGetCrawlByID(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(crawl)
 }
 
+// handleWebSocket handles WebSocket connections for live job updates
+// @Summary Connect to live crawl updates
+// @Description Establishes a WebSocket connection to receive real-time updates for a specific crawl job
+// @Tags websocket
+// @Param id path string true "Job ID"
+// @Router /ws/{id} [get]
+func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	jobID := vars["id"]
+
+	// Upgrade HTTP connection to WebSocket
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	// Create RabbitMQ queue for this job
+	queueName, err := createJobQueue(jobID)
+	if err != nil {
+		log.Printf("Failed to create job queue: %v", err)
+		conn.WriteJSON(WebSocketMessage{
+			Type:      "error",
+			JobID:     jobID,
+			Error:     "Failed to create event queue",
+			Timestamp: time.Now(),
+		})
+		return
+	}
+
+	// Send initial connection confirmation
+	initialMessage := WebSocketMessage{
+		Type:      "connected",
+		JobID:     jobID,
+		Progress:  "Connected to live updates",
+		Timestamp: time.Now(),
+	}
+	if err := conn.WriteJSON(initialMessage); err != nil {
+		log.Printf("Failed to send initial message: %v", err)
+		return
+	}
+
+	// Create channels for event consumption
+	eventChan := make(chan CrawlEvent, 100)
+	stopChan := make(chan bool, 1)
+
+	// Start consuming events from RabbitMQ
+	if err := consumeJobEvents(queueName, eventChan, stopChan); err != nil {
+		log.Printf("Failed to start consuming events: %v", err)
+		conn.WriteJSON(WebSocketMessage{
+			Type:      "error",
+			JobID:     jobID,
+			Error:     "Failed to start event consumption",
+			Timestamp: time.Now(),
+		})
+		return
+	}
+
+	// Handle WebSocket connection lifecycle
+	go func() {
+		// Read messages from client (mainly for ping/pong)
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				log.Printf("WebSocket read error: %v", err)
+				stopChan <- true
+				break
+			}
+		}
+	}()
+
+	// Stream events from RabbitMQ to WebSocket
+	for {
+		select {
+		case event, ok := <-eventChan:
+			if !ok {
+				// Event channel closed
+				return
+			}
+
+			// Convert CrawlEvent to WebSocketMessage
+			wsMessage := WebSocketMessage{
+				Type:      event.Type,
+				JobID:     event.JobID,
+				URL:       event.URL,
+				Depth:     event.Depth,
+				Progress:  event.Progress,
+				Timestamp: event.Timestamp,
+				Total:     event.Total,
+				PageCount: event.PageCount,
+				Error:     event.Error,
+			}
+
+			// Send to WebSocket client
+			if err := conn.WriteJSON(wsMessage); err != nil {
+				log.Printf("Failed to send WebSocket message: %v", err)
+				stopChan <- true
+				return
+			}
+
+		case <-stopChan:
+			return
+		}
+	}
+}
 
 // startAPIServer starts the REST API server
 func startAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
@@ -590,12 +954,44 @@ func startAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
 	// Create router
 	r := mux.NewRouter()
 
+	// Add CORS middleware
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Set CORS headers for all requests
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			
+			// Handle preflight requests
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			
+			next.ServeHTTP(w, r)
+		})
+	})
+	
+	// Add global OPTIONS handler for all routes
+	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}).Methods("OPTIONS")
+
 	// Define routes
-	r.HandleFunc("/crawl", handleCrawl).Methods("POST")
-	r.HandleFunc("/jobs", handleGetJobs).Methods("GET")
-	r.HandleFunc("/jobs/{id}", handleJobStatus).Methods("GET")
-	r.HandleFunc("/crawls", handleGetCrawls).Methods("GET")
-	r.HandleFunc("/crawls/{id}", handleGetCrawlByID).Methods("GET")
+	r.HandleFunc("/crawl", handleCrawl).Methods("POST", "OPTIONS")
+	r.HandleFunc("/jobs", handleGetJobs).Methods("GET", "OPTIONS")
+	r.HandleFunc("/jobs/{id}", handleJobStatus).Methods("GET", "OPTIONS")
+	r.HandleFunc("/crawls", handleGetCrawls).Methods("GET", "OPTIONS")
+	r.HandleFunc("/crawls/{id}", handleGetCrawlByID).Methods("GET", "OPTIONS")
+	r.HandleFunc("/ws/{id}", handleWebSocket).Methods("GET", "OPTIONS")
 
 	// Add health check endpoint
 	// @Summary Health check
@@ -619,6 +1015,7 @@ func startAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
 	log.Printf("  GET  /jobs/{id} - Get job status")
 	log.Printf("  GET  /crawls - List recent crawls")
 	log.Printf("  GET  /crawls/{id} - Get specific crawl")
+	log.Printf("  GET  /ws/{id} - WebSocket live updates")
 	log.Printf("  GET  /health - Health check")
 	log.Printf("  GET  /swagger/ - API documentation")
 
