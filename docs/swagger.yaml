@@ -1,0 +1,224 @@
+basePath: /
+definitions:
+  main.CrawlRequest:
+    properties:
+      delay:
+        example: 200ms
+        type: string
+      depth:
+        example: 2
+        type: integer
+      url:
+        example: https://example.com
+        type: string
+      workers:
+        example: 10
+        type: integer
+    required:
+    - url
+    type: object
+  main.CrawlResponse:
+    properties:
+      job_id:
+        example: 60f7b3b3b3b3b3b3b3b3b3b3
+        type: string
+      message:
+        example: Crawl job started successfully
+        type: string
+      status:
+        example: accepted
+        type: string
+    type: object
+  main.CrawlResult:
+    properties:
+      crawled_at:
+        type: string
+      duration:
+        type: string
+      id:
+        type: string
+      settings:
+        $ref: '#/definitions/main.CrawlSettings'
+      target_url:
+        type: string
+      total_urls:
+        type: integer
+      urls:
+        items:
+          type: string
+        type: array
+      urls_per_second:
+        type: string
+    type: object
+  main.CrawlSettings:
+    properties:
+      delay:
+        type: string
+      depth:
+        type: integer
+      workers:
+        type: integer
+    type: object
+  main.JobStatus:
+    properties:
+      created_at:
+        example: "2023-07-18T10:30:45Z"
+        type: string
+      error:
+        example: Error message if failed
+        type: string
+      id:
+        example: 60f7b3b3b3b3b3b3b3b3b3b3
+        type: string
+      progress:
+        example: Starting crawl...
+        type: string
+      result:
+        $ref: '#/definitions/main.CrawlResult'
+      status:
+        example: completed
+        type: string
+      updated_at:
+        example: "2023-07-18T10:32:15Z"
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@swagger.io
+    name: API Support
+    url: http://www.swagger.io/support
+  description: A fast web crawler API that extracts URLs from websites and stores
+    results in MongoDB
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Web Crawler API
+  version: "1.0"
+paths:
+  /crawl:
+    post:
+      consumes:
+      - application/json
+      description: Initiates a web crawling job for the specified URL with configurable
+        parameters
+      parameters:
+      - description: Crawl parameters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/main.CrawlRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.CrawlResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Start a new web crawl
+      tags:
+      - crawl
+  /crawls:
+    get:
+      consumes:
+      - application/json
+      description: Retrieves a list of recent crawl results from the database
+      parameters:
+      - default: 10
+        description: Maximum number of results to return
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.CrawlResult'
+            type: array
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List recent crawl results
+      tags:
+      - crawls
+  /crawls/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Retrieves a specific crawl result by its ID
+      parameters:
+      - description: Crawl ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.CrawlResult'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get specific crawl result
+      tags:
+      - crawls
+  /jobs/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Retrieves the current status and progress of a crawl job
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.JobStatus'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get crawl job status
+      tags:
+      - jobs
+swagger: "2.0"
