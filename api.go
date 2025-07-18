@@ -105,26 +105,61 @@ type URLFallback struct {
 	Error       string
 }
 
+// getRandomUserAgent returns a random realistic user agent
+func getRandomUserAgent() string {
+	userAgents := []string{
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/120.0",
+		"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0",
+	}
+	// Use a simple index rotation instead of modulo to get different agents
+	return userAgents[int(time.Now().UnixNano())%len(userAgents)]
+}
+
+// setBrowserHeaders sets realistic browser headers to bypass bot detection
+func setBrowserHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", getRandomUserAgent())
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Connection", "keep-alive")
+}
+
 // checkURLAccessibility performs a HEAD request to check if a URL is accessible
 func checkURLAccessibility(urlStr string) error {
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: 15 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// Allow up to 3 redirects
-			if len(via) >= 3 {
+			// Allow up to 5 redirects
+			if len(via) >= 5 {
 				return fmt.Errorf("too many redirects")
 			}
+			// Set browser headers for redirects too
+			setBrowserHeaders(req)
 			return nil
 		},
 	}
 	
-	req, err := http.NewRequest("HEAD", urlStr, nil)
+	// Try GET request instead of HEAD as some sites block HEAD requests
+	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
 	
-	// Set a user agent to appear like a real browser
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Go-Colly-Crawler/1.0)")
+	// Set realistic browser headers to bypass bot detection
+	setBrowserHeaders(req)
 	
 	resp, err := client.Do(req)
 	if err != nil {
@@ -133,8 +168,14 @@ func checkURLAccessibility(urlStr string) error {
 	defer resp.Body.Close()
 	
 	// Consider 2xx and 3xx status codes as accessible
+	// Also accept some 4xx codes that might still allow crawling
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		return nil
+	}
+	
+	// Some sites return 403 but might still be crawlable with proper headers
+	if resp.StatusCode == 403 {
+		return fmt.Errorf("HTTP 403: Forbidden (may need different approach)")
 	}
 	
 	return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
@@ -323,10 +364,13 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 		return nil, fmt.Errorf("error parsing actual URL: %v", err)
 	}
 
-	// Create async crawler
+	// Create async crawler with stealth settings
 	c := colly.NewCollector(
 		colly.Async(true), // Enable async mode
 	)
+	
+	// BYPASS ROBOTS.TXT - This ignores robots.txt entirely
+	c.IgnoreRobotsTxt = true
 	
 	// Configure limits for async operation
 	c.Limit(&colly.LimitRule{
@@ -334,7 +378,7 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 		Parallelism: workers,
 		Delay:       delay,
 	})
-	c.SetRequestTimeout(30 * time.Second)
+	c.SetRequestTimeout(45 * time.Second) // Longer timeout for stealth
 
 	// Allow both www and non-www versions of the domain
 	baseDomain := parsedURL.Host
@@ -346,8 +390,44 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 	}
 	c.AllowedDomains = allowedDomains
 
-	// Set user agent to be respectful
-	c.UserAgent = "Go-Colly-Crawler/1.0"
+	// Set realistic browser headers for stealth crawling
+	c.OnRequest(func(r *colly.Request) {
+		if stopped {
+			r.Abort()
+			return
+		}
+		
+		// Set realistic browser headers to mimic real users
+		r.Headers.Set("User-Agent", getRandomUserAgent())
+		r.Headers.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8")
+		r.Headers.Set("Accept-Language", "en-US,en;q=0.9")
+		r.Headers.Set("Accept-Encoding", "gzip, deflate, br")
+		r.Headers.Set("Cache-Control", "no-cache")
+		r.Headers.Set("Pragma", "no-cache")
+		r.Headers.Set("Sec-Fetch-Dest", "document")
+		r.Headers.Set("Sec-Fetch-Mode", "navigate") 
+		r.Headers.Set("Sec-Fetch-Site", "cross-site")
+		r.Headers.Set("Sec-Fetch-User", "?1")
+		r.Headers.Set("Upgrade-Insecure-Requests", "1")
+		r.Headers.Set("Connection", "keep-alive")
+		
+		// Add referer for subsequent requests to look more natural
+		if r.Depth > 0 {
+			r.Headers.Set("Referer", actualURL)
+			r.Headers.Set("Sec-Fetch-Site", "same-origin")
+		}
+		
+		count := atomic.AddInt64(&pagesCrawled, 1)
+		
+		// Publish progress event (async, non-blocking)
+		go publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("Crawling page %d at depth %d: %s", count, r.Depth, r.URL.String()),
+			Timestamp: time.Now(),
+			PageCount: int(count),
+		})
+	})
 
 	// Thread-safe URL tracking
 	var (
@@ -439,24 +519,6 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 		}
 	})
 
-	// Request tracking with progress events
-	c.OnRequest(func(r *colly.Request) {
-		if stopped {
-			r.Abort()
-			return
-		}
-		
-		count := atomic.AddInt64(&pagesCrawled, 1)
-		
-		// Publish progress event (async, non-blocking)
-		go publishCrawlEvent(CrawlEvent{
-			Type:      "progress",
-			JobID:     jobID,
-			Progress:  fmt.Sprintf("Crawling page %d at depth %d: %s", count, r.Depth, r.URL.String()),
-			Timestamp: time.Now(),
-			PageCount: int(count),
-		})
-	})
 
 	// Response tracking
 	c.OnResponse(func(r *colly.Response) {
