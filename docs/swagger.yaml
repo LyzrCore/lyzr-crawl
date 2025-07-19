@@ -8,6 +8,18 @@ definitions:
       depth:
         example: 2
         type: integer
+      enable_headless:
+        example: false
+        type: boolean
+      enable_html:
+        example: true
+        type: boolean
+      enable_sitemap:
+        example: true
+        type: boolean
+      headless_timeout:
+        example: 30
+        type: integer
       job_id:
         example: my-custom-session-123
         type: string
@@ -17,6 +29,9 @@ definitions:
       url:
         example: https://example.com
         type: string
+      wait_for_js:
+        example: true
+        type: boolean
       workers:
         example: 10
         type: integer

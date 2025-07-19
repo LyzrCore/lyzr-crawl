@@ -296,6 +296,22 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 2
                 },
+                "enable_headless": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "enable_html": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "enable_sitemap": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "headless_timeout": {
+                    "type": "integer",
+                    "example": 30
+                },
                 "job_id": {
                     "type": "string",
                     "example": "my-custom-session-123"
@@ -307,6 +323,10 @@ const docTemplate = `{
                 "url": {
                     "type": "string",
                     "example": "https://example.com"
+                },
+                "wait_for_js": {
+                    "type": "boolean",
+                    "example": true
                 },
                 "workers": {
                     "type": "integer",

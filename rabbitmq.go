@@ -11,7 +11,7 @@ import (
 
 // CrawlEvent represents an event published to RabbitMQ
 type CrawlEvent struct {
-	Type       string    `json:"type"`           // "progress", "url_discovered", "completed", "error"
+	Type       string    `json:"type"`           // "progress", "url_discovered", "completed", "error", "sitemap_discovered", "tier_switch"
 	JobID      string    `json:"job_id"`
 	URL        string    `json:"url,omitempty"`
 	Depth      int       `json:"depth,omitempty"`
@@ -20,6 +20,7 @@ type CrawlEvent struct {
 	Total      int       `json:"total,omitempty"`      // Total URLs found so far
 	PageCount  int       `json:"page_count,omitempty"` // Total pages crawled
 	Error      string    `json:"error,omitempty"`
+	Tier       string    `json:"tier,omitempty"`       // "sitemap", "html", "headless"
 }
 
 // RabbitMQ connection and configuration

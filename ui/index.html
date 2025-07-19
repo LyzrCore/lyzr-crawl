@@ -237,6 +237,16 @@
             border-color: #3498db;
         }
 
+        .event-sitemap_discovered {
+            background: #e8f6f3;
+            border-color: #16a085;
+        }
+
+        .event-tier_switch {
+            background: #fef9e7;
+            border-color: #f39c12;
+        }
+
         .event-timestamp {
             color: #7f8c8d;
             font-size: 11px;
@@ -322,6 +332,49 @@
                     <input type="text" id="jobId" placeholder="my-crawl-session-123">
                 </div>
                 
+                <h4 style="margin: 25px 0 10px 0; color: #2c3e50;">Crawling Tiers</h4>
+                <p style="margin: 0 0 15px 0; color: #7f8c8d; font-size: 14px;">
+                    <strong>Tier 1:</strong> Sitemap discovery (fastest) → 
+                    <strong>Tier 2:</strong> HTML link crawling (fallback) → 
+                    <strong>Tier 3:</strong> Headless browser (for JS-heavy sites)
+                </p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center;" title="Discovers and parses XML sitemaps for comprehensive URL lists">
+                            <input type="checkbox" id="enableSitemap" checked style="margin-right: 8px;">
+                            Enable Sitemap Crawling
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center;" title="Crawls HTML pages following anchor links with stealth headers">
+                            <input type="checkbox" id="enableHTML" checked style="margin-right: 8px;">
+                            Enable HTML Link Discovery
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center;" title="Uses headless Chrome browser for JavaScript-heavy sites and SPAs">
+                            <input type="checkbox" id="enableHeadless" style="margin-right: 8px;">
+                            Enable Headless Browser
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="headlessTimeout">Headless Timeout (seconds)</label>
+                        <input type="number" id="headlessTimeout" value="30" min="10" max="120">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center;" title="Waits for JavaScript to load and handles dynamic content like infinite scroll">
+                            <input type="checkbox" id="waitForJS" checked style="margin-right: 8px;">
+                            Wait for JavaScript (Headless)
+                        </label>
+                    </div>
+                </div>
+                
                 <button type="submit" class="btn" id="startBtn">Start Crawling</button>
             </form>
         </div>
@@ -334,18 +387,31 @@
             
             <div class="job-info" id="jobInfo"></div>
             
+            <div class="tier-progress hidden" id="tierProgress" style="margin: 15px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #3498db;">
+                <div style="font-weight: 600; margin-bottom: 8px; color: #2c3e50;">Current Tier:</div>
+                <div id="currentTier" style="font-size: 14px; color: #7f8c8d;">Initializing...</div>
+            </div>
+            
             <div class="stats">
                 <div class="stat">
                     <div class="stat-value" id="urlCount">0</div>
-                    <div class="stat-label">URLs Found</div>
+                    <div class="stat-label">Total URLs</div>
                 </div>
                 <div class="stat">
-                    <div class="stat-value" id="pageCount">0</div>
-                    <div class="stat-label">Pages Crawled</div>
+                    <div class="stat-value" id="sitemapCount">0</div>
+                    <div class="stat-label">Sitemap URLs</div>
                 </div>
                 <div class="stat">
-                    <div class="stat-value" id="errorCount">0</div>
-                    <div class="stat-label">Errors</div>
+                    <div class="stat-value" id="htmlCount">0</div>
+                    <div class="stat-label">HTML URLs</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="headlessCount">0</div>
+                    <div class="stat-label">Headless URLs</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="tiersUsed">0</div>
+                    <div class="stat-label">Tiers Used</div>
                 </div>
                 <div class="stat">
                     <div class="stat-value" id="duration">0s</div>
@@ -373,7 +439,10 @@
                 this.durationTimer = null;
                 this.stats = {
                     urlCount: 0,
-                    pageCount: 0,
+                    sitemapCount: 0,
+                    htmlCount: 0,
+                    headlessCount: 0,
+                    tiersUsed: 0,
                     errorCount: 0
                 };
                 
@@ -398,7 +467,12 @@
                     workers: parseInt(document.getElementById('workers').value),
                     delay: document.getElementById('delay').value,
                     max_urls: parseInt(document.getElementById('maxUrls').value),
-                    job_id: document.getElementById('jobId').value || undefined
+                    job_id: document.getElementById('jobId').value || undefined,
+                    enable_sitemap: document.getElementById('enableSitemap').checked,
+                    enable_html: document.getElementById('enableHTML').checked,
+                    enable_headless: document.getElementById('enableHeadless').checked,
+                    headless_timeout: parseInt(document.getElementById('headlessTimeout').value),
+                    wait_for_js: document.getElementById('waitForJS').checked
                 };
 
                 const startBtn = document.getElementById('startBtn');
@@ -438,15 +512,22 @@
 
             showJobInfo(request, response) {
                 const jobInfo = document.getElementById('jobInfo');
+                const tierSettings = [];
+                if (request.enable_sitemap) tierSettings.push('Sitemap');
+                if (request.enable_html) tierSettings.push('HTML');
+                if (request.enable_headless) tierSettings.push('Headless');
+                
                 jobInfo.innerHTML = `
                     <strong>Job ID:</strong> ${response.job_id}<br>
                     <strong>Status:</strong> ${response.status}<br>
                     <strong>Target:</strong> ${request.url}<br>
-                    <strong>Settings:</strong> Depth: ${request.depth}, Workers: ${request.workers}, Max URLs: ${request.max_urls}
+                    <strong>Settings:</strong> Depth: ${request.depth}, Workers: ${request.workers}, Max URLs: ${request.max_urls}<br>
+                    <strong>Enabled Tiers:</strong> ${tierSettings.join(', ') || 'Default (Sitemap + HTML)'}
                 `;
 
                 document.getElementById('statusCard').classList.remove('hidden');
                 document.getElementById('eventsContainer').classList.remove('hidden');
+                document.getElementById('tierProgress').classList.remove('hidden');
             }
 
             connectWebSocket() {
@@ -488,13 +569,29 @@
                 const timestamp = new Date(data.timestamp).toLocaleTimeString();
                 let content = data.progress || '';
                 
+                // Add tier badge if present
+                let tierBadge = '';
+                if (data.tier) {
+                    const tierColors = {
+                        'sitemap': '#16a085',
+                        'html': '#3498db', 
+                        'headless': '#e67e22'
+                    };
+                    const tierColor = tierColors[data.tier] || '#95a5a6';
+                    tierBadge = `<span style="background: ${tierColor}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; margin-left: 8px;">${data.tier.toUpperCase()}</span>`;
+                }
+                
                 if (data.type === 'url_discovered' && data.url) {
                     content = `Found URL: <a href="${data.url}" target="_blank" class="url-link">${data.url}</a>`;
                     if (data.total) content += ` (Total: ${data.total})`;
+                } else if (data.type === 'sitemap_discovered' && data.url) {
+                    content = `🗺️ Discovered sitemap: <a href="${data.url}" target="_blank" class="url-link">${data.url}</a>`;
+                } else if (data.type === 'tier_switch') {
+                    content = `🔄 ${data.progress}`;
                 }
                 
                 eventDiv.innerHTML = `
-                    <div class="event-timestamp">${timestamp}</div>
+                    <div class="event-timestamp">${timestamp}${tierBadge}</div>
                     <div class="event-content">${content}</div>
                 `;
                 
@@ -512,19 +609,70 @@
                     document.getElementById('urlCount').textContent = this.stats.urlCount;
                 }
                 
-                if (data.page_count !== undefined) {
-                    this.stats.pageCount = data.page_count;
-                    document.getElementById('pageCount').textContent = this.stats.pageCount;
+                // Track tier-specific statistics
+                if (data.tier) {
+                    switch (data.tier) {
+                        case 'sitemap':
+                            if (data.total && data.type !== 'error') {
+                                this.stats.sitemapCount = data.total;
+                                document.getElementById('sitemapCount').textContent = this.stats.sitemapCount;
+                            }
+                            break;
+                        case 'html':
+                            // HTML URLs are calculated as new URLs added in the tier switch message
+                            if (data.progress && data.progress.includes('added')) {
+                                const match = data.progress.match(/added (\d+) new URLs/);
+                                if (match) {
+                                    this.stats.htmlCount = parseInt(match[1]);
+                                    document.getElementById('htmlCount').textContent = this.stats.htmlCount;
+                                }
+                            }
+                            break;
+                        case 'headless':
+                            if (data.progress && data.progress.includes('added')) {
+                                const match = data.progress.match(/added (\d+) new URLs/);
+                                if (match) {
+                                    this.stats.headlessCount = parseInt(match[1]);
+                                    document.getElementById('headlessCount').textContent = this.stats.headlessCount;
+                                }
+                            }
+                            break;
+                    }
+                }
+                
+                // Count tiers used when tier switches occur
+                if (data.type === 'tier_switch' && data.progress.includes('Starting Tier')) {
+                    this.stats.tiersUsed++;
+                    document.getElementById('tiersUsed').textContent = this.stats.tiersUsed;
+                    
+                    // Update current tier display
+                    const currentTierElement = document.getElementById('currentTier');
+                    if (data.progress.includes('Tier 1')) {
+                        currentTierElement.innerHTML = '🗺️ <strong>Tier 1:</strong> Sitemap Discovery - Finding sitemaps and extracting URLs';
+                    } else if (data.progress.includes('Tier 2')) {
+                        currentTierElement.innerHTML = '🔗 <strong>Tier 2:</strong> HTML Link Crawling - Following links with stealth headers';
+                    } else if (data.progress.includes('Tier 3')) {
+                        currentTierElement.innerHTML = '🤖 <strong>Tier 3:</strong> Headless Browser - Full browser automation for JS sites';
+                    }
                 }
                 
                 if (data.type === 'error') {
                     this.stats.errorCount++;
-                    document.getElementById('errorCount').textContent = this.stats.errorCount;
                 }
                 
                 // Stop timer when crawl completes
                 if (data.type === 'completed') {
                     this.stopDurationTimer();
+                    
+                    // Update tier status to show completion with breakdown
+                    const currentTierElement = document.getElementById('currentTier');
+                    let breakdown = [];
+                    if (this.stats.sitemapCount > 0) breakdown.push(`Sitemap: ${this.stats.sitemapCount}`);
+                    if (this.stats.htmlCount > 0) breakdown.push(`HTML: ${this.stats.htmlCount}`);
+                    if (this.stats.headlessCount > 0) breakdown.push(`Headless: ${this.stats.headlessCount}`);
+                    
+                    const breakdownText = breakdown.length > 0 ? ` (${breakdown.join(', ')})` : '';
+                    currentTierElement.innerHTML = `✅ <strong>Crawling Completed!</strong> Used ${this.stats.tiersUsed} tier(s) - Total: ${this.stats.urlCount} URLs found${breakdownText}`;
                 }
             }
 
@@ -540,10 +688,19 @@
             }
 
             resetStats() {
-                this.stats = { urlCount: 0, pageCount: 0, errorCount: 0 };
+                this.stats = { 
+                    urlCount: 0, 
+                    sitemapCount: 0, 
+                    htmlCount: 0, 
+                    headlessCount: 0, 
+                    tiersUsed: 0, 
+                    errorCount: 0 
+                };
                 document.getElementById('urlCount').textContent = '0';
-                document.getElementById('pageCount').textContent = '0';
-                document.getElementById('errorCount').textContent = '0';
+                document.getElementById('sitemapCount').textContent = '0';
+                document.getElementById('htmlCount').textContent = '0';
+                document.getElementById('headlessCount').textContent = '0';
+                document.getElementById('tiersUsed').textContent = '0';
                 document.getElementById('duration').textContent = '0s';
             }
 

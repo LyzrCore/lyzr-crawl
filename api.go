@@ -1,9 +1,12 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -14,6 +17,8 @@ import (
 	"time"
 
 	"github.com/gocolly/colly/v2"
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -41,12 +46,17 @@ import (
 
 // CrawlRequest represents the API request for crawling
 type CrawlRequest struct {
-	URL     string `json:"url" example:"https://example.com" binding:"required"`
-	JobID   string `json:"job_id,omitempty" example:"my-custom-session-123"`
-	Depth   int    `json:"depth,omitempty" example:"2"`
-	Workers int    `json:"workers,omitempty" example:"10"`
-	Delay   string `json:"delay,omitempty" example:"200ms"`
-	MaxURLs int    `json:"max_urls,omitempty" example:"1000"`
+	URL             string `json:"url" example:"https://example.com" binding:"required"`
+	JobID           string `json:"job_id,omitempty" example:"my-custom-session-123"`
+	Depth           int    `json:"depth,omitempty" example:"2"`
+	Workers         int    `json:"workers,omitempty" example:"10"`
+	Delay           string `json:"delay,omitempty" example:"200ms"`
+	MaxURLs         int    `json:"max_urls,omitempty" example:"1000"`
+	EnableSitemap   bool   `json:"enable_sitemap,omitempty" example:"true"`
+	EnableHTML      bool   `json:"enable_html,omitempty" example:"true"`
+	EnableHeadless  bool   `json:"enable_headless,omitempty" example:"false"`
+	HeadlessTimeout int    `json:"headless_timeout,omitempty" example:"30"`
+	WaitForJS       bool   `json:"wait_for_js,omitempty" example:"true"`
 }
 
 // CrawlResponse represents the immediate API response
@@ -70,7 +80,7 @@ type JobStatus struct {
 
 // WebSocketMessage represents a real-time update message sent to WebSocket clients
 type WebSocketMessage struct {
-	Type      string    `json:"type"`             // "progress", "url_discovered", "completed", "connected", "error"
+	Type      string    `json:"type"`             // "progress", "url_discovered", "completed", "connected", "error", "sitemap_discovered", "tier_switch"
 	JobID     string    `json:"job_id"`
 	URL       string    `json:"url,omitempty"`
 	Depth     int       `json:"depth,omitempty"`
@@ -79,6 +89,38 @@ type WebSocketMessage struct {
 	Total     int       `json:"total,omitempty"`      // Total URLs found
 	PageCount int       `json:"page_count,omitempty"` // Total pages crawled
 	Error     string    `json:"error,omitempty"`
+	Tier      string    `json:"tier,omitempty"`       // "sitemap", "html", "headless"
+}
+
+// Sitemap XML structures for parsing
+type SitemapURL struct {
+	Loc        string    `xml:"loc"`
+	LastMod    time.Time `xml:"lastmod"`
+	ChangeFreq string    `xml:"changefreq"`
+	Priority   float64   `xml:"priority"`
+}
+
+type SitemapSet struct {
+	XMLName xml.Name     `xml:"urlset"`
+	URLs    []SitemapURL `xml:"url"`
+}
+
+type SitemapReference struct {
+	Loc     string    `xml:"loc"`
+	LastMod time.Time `xml:"lastmod"`
+}
+
+type SitemapIndex struct {
+	XMLName  xml.Name           `xml:"sitemapindex"`
+	Sitemaps []SitemapReference `xml:"sitemap"`
+}
+
+// CrawlTierStats represents statistics for each crawling tier
+type CrawlTierStats struct {
+	SitemapURLs  int `json:"sitemap_urls"`
+	HTMLURLs     int `json:"html_urls"`
+	HeadlessURLs int `json:"headless_urls"`
+	TotalTiers   int `json:"total_tiers_used"`
 }
 
 // Global variables for the API server
@@ -125,7 +167,7 @@ type ScrapeOpsUserAgent struct {
 
 // ScrapeOpsUserAgentResponse represents the full response
 type ScrapeOpsUserAgentResponse struct {
-	Result []ScrapeOpsUserAgent `json:"result"`
+	Result []string `json:"result"`
 }
 
 // ScrapeOpsHeader represents browser header response from ScrapeOps
@@ -156,11 +198,8 @@ func fetchScrapeOpsUserAgents() error {
 		return fmt.Errorf("failed to decode response: %v", err)
 	}
 	
-	// Extract user agents
-	userAgents := make([]string, len(response.Result))
-	for i, ua := range response.Result {
-		userAgents[i] = ua.UserAgent
-	}
+	// Extract user agents - response.Result is now a string array
+	userAgents := response.Result
 	
 	scrapeOpsConfig.UserAgents = userAgents
 	scrapeOpsConfig.LastUpdate = time.Now()
@@ -495,7 +534,722 @@ func initMongoDB(mongoURI, dbName string) error {
 	return nil
 }
 
-// crawlWebsiteWithEvents performs async crawling with real-time events
+// discoverSitemaps discovers sitemap URLs from common locations
+func discoverSitemaps(baseURL, jobID string) []string {
+	var sitemapURLs []string
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return sitemapURLs
+	}
+	
+	baseScheme := parsed.Scheme
+	baseHost := parsed.Host
+	
+	// Common sitemap locations to check
+	candidates := []string{
+		fmt.Sprintf("%s://%s/sitemap.xml", baseScheme, baseHost),
+		fmt.Sprintf("%s://%s/sitemap_index.xml", baseScheme, baseHost),
+		fmt.Sprintf("%s://%s/sitemaps.xml", baseScheme, baseHost),
+		fmt.Sprintf("%s://%s/sitemap/sitemap.xml", baseScheme, baseHost),
+	}
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  "🗺️ Discovering sitemaps...",
+		Timestamp: time.Now(),
+		Tier:      "sitemap",
+	})
+	
+	// Check each candidate URL
+	for _, candidate := range candidates {
+		if checkSitemapExists(candidate) {
+			sitemapURLs = append(sitemapURLs, candidate)
+			publishCrawlEvent(CrawlEvent{
+				Type:      "sitemap_discovered",
+				JobID:     jobID,
+				URL:       candidate,
+				Progress:  fmt.Sprintf("📍 Found sitemap: %s", candidate),
+				Timestamp: time.Now(),
+				Tier:      "sitemap",
+			})
+		}
+	}
+	
+	// Also check robots.txt for sitemap references
+	robotsURL := fmt.Sprintf("%s://%s/robots.txt", baseScheme, baseHost)
+	robotsSitemaps := extractSitemapsFromRobots(robotsURL)
+	for _, sitemapURL := range robotsSitemaps {
+		if checkSitemapExists(sitemapURL) {
+			sitemapURLs = append(sitemapURLs, sitemapURL)
+			publishCrawlEvent(CrawlEvent{
+				Type:      "sitemap_discovered",
+				JobID:     jobID,
+				URL:       sitemapURL,
+				Progress:  fmt.Sprintf("📍 Found sitemap in robots.txt: %s", sitemapURL),
+				Timestamp: time.Now(),
+				Tier:      "sitemap",
+			})
+		}
+	}
+	
+	return sitemapURLs
+}
+
+// checkSitemapExists checks if a sitemap URL exists and is valid
+func checkSitemapExists(sitemapURL string) bool {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("HEAD", sitemapURL, nil)
+	if err != nil {
+		return false
+	}
+	
+	setBrowserHeaders(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	
+	return resp.StatusCode == 200
+}
+
+// extractSitemapsFromRobots extracts sitemap URLs from robots.txt
+func extractSitemapsFromRobots(robotsURL string) []string {
+	var sitemaps []string
+	
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", robotsURL, nil)
+	if err != nil {
+		return sitemaps
+	}
+	
+	setBrowserHeaders(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return sitemaps
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		return sitemaps
+	}
+	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return sitemaps
+	}
+	
+	lines := strings.Split(string(body), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(line), "sitemap:") {
+			sitemapURL := strings.TrimSpace(line[8:]) // Remove "sitemap:" prefix
+			if sitemapURL != "" {
+				sitemaps = append(sitemaps, sitemapURL)
+			}
+		}
+	}
+	
+	return sitemaps
+}
+
+// parseSitemap parses a sitemap XML and returns URLs
+func parseSitemap(sitemapURL, jobID string) ([]string, error) {
+	var urls []string
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  fmt.Sprintf("📄 Parsing sitemap: %s", sitemapURL),
+		Timestamp: time.Now(),
+		Tier:      "sitemap",
+	})
+	
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest("GET", sitemapURL, nil)
+	if err != nil {
+		return urls, err
+	}
+	
+	setBrowserHeaders(req)
+	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	resp, err := client.Do(req)
+	if err != nil {
+		return urls, err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		return urls, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+	}
+	
+	// Handle gzip compression
+	var reader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return urls, fmt.Errorf("failed to create gzip reader: %v", err)
+		}
+		defer gzipReader.Close()
+		reader = gzipReader
+	}
+	
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return urls, err
+	}
+	
+	// Try parsing as sitemap index first
+	var sitemapIndex SitemapIndex
+	if err := xml.Unmarshal(body, &sitemapIndex); err == nil && len(sitemapIndex.Sitemaps) > 0 {
+		publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("📂 Found sitemap index with %d sitemaps", len(sitemapIndex.Sitemaps)),
+			Timestamp: time.Now(),
+			Tier:      "sitemap",
+		})
+		
+		// Recursively parse each referenced sitemap
+		for _, ref := range sitemapIndex.Sitemaps {
+			subURLs, err := parseSitemap(ref.Loc, jobID)
+			if err != nil {
+				log.Printf("Failed to parse sub-sitemap %s: %v", ref.Loc, err)
+				continue
+			}
+			urls = append(urls, subURLs...)
+		}
+		return urls, nil
+	}
+	
+	// Try parsing as regular sitemap
+	var sitemapSet SitemapSet
+	if err := xml.Unmarshal(body, &sitemapSet); err != nil {
+		// Log the first few bytes of the response for debugging
+		preview := string(body)
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		log.Printf("Failed to parse sitemap %s, response preview: %q", sitemapURL, preview)
+		return urls, fmt.Errorf("failed to parse sitemap XML: %v", err)
+	}
+	
+	for _, urlEntry := range sitemapSet.URLs {
+		if urlEntry.Loc != "" {
+			urls = append(urls, urlEntry.Loc)
+		}
+	}
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  fmt.Sprintf("✅ Extracted %d URLs from sitemap", len(urls)),
+		Timestamp: time.Now(),
+		Tier:      "sitemap",
+		Total:     len(urls),
+	})
+	
+	return urls, nil
+}
+
+// crawlWithSitemaps performs sitemap-based crawling
+func crawlWithSitemaps(targetURL, jobID string) ([]string, error) {
+	var allURLs []string
+	
+	// Discover sitemaps
+	sitemapURLs := discoverSitemaps(targetURL, jobID)
+	if len(sitemapURLs) == 0 {
+		publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  "⚠️ No sitemaps found",
+			Timestamp: time.Now(),
+			Tier:      "sitemap",
+		})
+		return allURLs, nil
+	}
+	
+	// Parse each discovered sitemap
+	for _, sitemapURL := range sitemapURLs {
+		urls, err := parseSitemap(sitemapURL, jobID)
+		if err != nil {
+			publishCrawlEvent(CrawlEvent{
+				Type:      "error",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("❌ Failed to parse sitemap %s: %v", sitemapURL, err),
+				Timestamp: time.Now(),
+				Tier:      "sitemap",
+				Error:     err.Error(),
+			})
+			continue
+		}
+		allURLs = append(allURLs, urls...)
+	}
+	
+	// Remove duplicates
+	uniqueURLs := removeDuplicateURLs(allURLs)
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  fmt.Sprintf("🎯 Sitemap crawling complete: %d unique URLs discovered", len(uniqueURLs)),
+		Timestamp: time.Now(),
+		Tier:      "sitemap",
+		Total:     len(uniqueURLs),
+	})
+	
+	return uniqueURLs, nil
+}
+
+// removeDuplicateURLs removes duplicate URLs from a slice
+func removeDuplicateURLs(urls []string) []string {
+	seen := make(map[string]bool)
+	var unique []string
+	
+	for _, url := range urls {
+		if !seen[url] {
+			seen[url] = true
+			unique = append(unique, url)
+		}
+	}
+	
+	return unique
+}
+
+// crawlWithRod performs headless browser crawling using Rod
+func crawlWithRod(targetURL, jobID string, config CrawlRequest) ([]string, error) {
+	var urls []string
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "tier_switch",
+		JobID:     jobID,
+		Progress:  "🤖 Starting headless browser crawling with Rod...",
+		Timestamp: time.Now(),
+		Tier:      "headless",
+	})
+	
+	// Launch browser
+	launcher := launcher.New().Headless(true).NoSandbox(true)
+	if config.HeadlessTimeout > 0 {
+		launcher = launcher.Set("timeout", fmt.Sprintf("%d", config.HeadlessTimeout*1000))
+	}
+	
+	browserURL, err := launcher.Launch()
+	if err != nil {
+		return urls, fmt.Errorf("failed to launch browser: %v", err)
+	}
+	
+	browser := rod.New().ControlURL(browserURL)
+	err = browser.Connect()
+	if err != nil {
+		return urls, fmt.Errorf("failed to connect to browser: %v", err)
+	}
+	defer browser.MustClose()
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  "🌐 Browser launched, navigating to target URL...",
+		Timestamp: time.Now(),
+		Tier:      "headless",
+	})
+	
+	// Create page and navigate
+	page := browser.MustPage()
+	defer page.MustClose()
+	
+	// Set user agent for stealth - we'll skip this for now to get the build working
+	
+	// Navigate to page
+	err = page.Navigate(targetURL)
+	if err != nil {
+		return urls, fmt.Errorf("failed to navigate to %s: %v", targetURL, err)
+	}
+	
+	// Wait for page to load
+	if config.WaitForJS {
+		publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  "⏳ Waiting for JavaScript to load...",
+			Timestamp: time.Now(),
+			Tier:      "headless",
+		})
+		
+		err = page.WaitLoad()
+		if err != nil {
+			log.Printf("Page load wait failed: %v", err)
+		}
+		
+		// Additional wait for dynamic content
+		time.Sleep(2 * time.Second)
+	}
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  "🔍 Extracting URLs from rendered page...",
+		Timestamp: time.Now(),
+		Tier:      "headless",
+	})
+	
+	// Extract URLs from the rendered page
+	foundURLs := extractURLsFromRodPage(page, targetURL, jobID)
+	urls = append(urls, foundURLs...)
+	
+	// Handle dynamic content if enabled
+	if config.WaitForJS {
+		// Scroll to bottom to trigger lazy loading
+		publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  "📜 Scrolling to load dynamic content...",
+			Timestamp: time.Now(),
+			Tier:      "headless",
+		})
+		
+		dynamicURLs := handleDynamicContent(page, targetURL, jobID)
+		urls = append(urls, dynamicURLs...)
+	}
+	
+	// Remove duplicates
+	uniqueURLs := removeDuplicateURLs(urls)
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  fmt.Sprintf("🎯 Headless crawling complete: %d unique URLs discovered", len(uniqueURLs)),
+		Timestamp: time.Now(),
+		Tier:      "headless",
+		Total:     len(uniqueURLs),
+	})
+	
+	return uniqueURLs, nil
+}
+
+// extractURLsFromRodPage extracts all URLs from a Rod page
+func extractURLsFromRodPage(page *rod.Page, baseURL, jobID string) []string {
+	var urls []string
+	
+	// Extract all anchor tag hrefs
+	links, err := page.Elements("a[href]")
+	if err != nil {
+		log.Printf("Failed to find anchor elements: %v", err)
+		return urls
+	}
+	
+	parsedBase, err := url.Parse(baseURL)
+	if err != nil {
+		return urls
+	}
+	
+	for _, link := range links {
+		href, err := link.Attribute("href")
+		if err != nil || href == nil {
+			continue
+		}
+		
+		hrefStr := *href
+		if hrefStr == "" || shouldSkipURL(hrefStr) {
+			continue
+		}
+		
+		// Convert to absolute URL
+		absoluteURL, err := url.Parse(hrefStr)
+		if err != nil {
+			continue
+		}
+		
+		if !absoluteURL.IsAbs() {
+			absoluteURL = parsedBase.ResolveReference(absoluteURL)
+		}
+		
+		// Only include URLs from the same domain
+		if absoluteURL.Host == parsedBase.Host || 
+		   (strings.HasPrefix(parsedBase.Host, "www.") && absoluteURL.Host == parsedBase.Host[4:]) ||
+		   (strings.HasPrefix(absoluteURL.Host, "www.") && absoluteURL.Host[4:] == parsedBase.Host) {
+			
+			cleanURL := absoluteURL.Scheme + "://" + absoluteURL.Host + absoluteURL.Path
+			if absoluteURL.RawQuery != "" {
+				cleanURL += "?" + absoluteURL.RawQuery
+			}
+			
+			urls = append(urls, cleanURL)
+		}
+	}
+	
+	// Also extract URLs from onclick handlers and data attributes
+	dynamicLinks := extractDynamicURLs(page, baseURL)
+	urls = append(urls, dynamicLinks...)
+	
+	return urls
+}
+
+// extractDynamicURLs extracts URLs from JavaScript and dynamic elements
+func extractDynamicURLs(page *rod.Page, baseURL string) []string {
+	var urls []string
+	
+	// Extract from data attributes that might contain URLs
+	dataElements, err := page.Elements("[data-href], [data-url], [data-link]")
+	if err == nil {
+		for _, elem := range dataElements {
+			for _, attr := range []string{"data-href", "data-url", "data-link"} {
+				value, err := elem.Attribute(attr)
+				if err == nil && value != nil && *value != "" {
+					if !shouldSkipURL(*value) {
+						urls = append(urls, *value)
+					}
+				}
+			}
+		}
+	}
+	
+	return urls
+}
+
+// handleDynamicContent handles infinite scroll and AJAX content
+func handleDynamicContent(page *rod.Page, baseURL, jobID string) []string {
+	var urls []string
+	
+	// Scroll to bottom multiple times to trigger lazy loading
+	for i := 0; i < 3; i++ {
+		// Scroll to bottom
+		_, err := page.Eval(`window.scrollTo(0, document.body.scrollHeight)`)
+		if err != nil {
+			log.Printf("Scroll failed: %v", err)
+			break
+		}
+		
+		// Wait for potential AJAX requests
+		time.Sleep(2 * time.Second)
+		
+		// Check for new links after scrolling
+		newLinks := extractURLsFromRodPage(page, baseURL, jobID)
+		urls = append(urls, newLinks...)
+		
+		publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("📜 Scroll %d: Found %d additional URLs", i+1, len(newLinks)),
+			Timestamp: time.Now(),
+			Tier:      "headless",
+		})
+	}
+	
+	return urls
+}
+
+// crawlWebsiteWithTiers performs three-tier crawling with smart fallbacks
+func crawlWebsiteWithTiers(targetURL string, config CrawlRequest, jobID string) (*CrawlResult, error) {
+	var allURLs []string
+	var tierStats CrawlTierStats
+	startTime := time.Now()
+	
+	// Publish initial setup progress
+	stealthStatus := "basic headers"
+	if len(scrapeOpsConfig.UserAgents) > 0 {
+		stealthStatus = fmt.Sprintf("ScrapeOps stealth (%d user agents, %d header sets)", len(scrapeOpsConfig.UserAgents), len(scrapeOpsConfig.Headers))
+	}
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "progress",
+		JobID:     jobID,
+		Progress:  fmt.Sprintf("🚀 Starting three-tier crawling for %s (%s)", targetURL, stealthStatus),
+		Timestamp: time.Now(),
+	})
+	
+	// Set defaults for tier enablement if not specified
+	enableSitemap := config.EnableSitemap || (!config.EnableSitemap && !config.EnableHTML && !config.EnableHeadless) // Default true if nothing specified
+	enableHTML := config.EnableHTML || (!config.EnableSitemap && !config.EnableHTML && !config.EnableHeadless)    // Default true if nothing specified
+	enableHeadless := config.EnableHeadless
+	
+	// Tier 1: Sitemap Crawling (Primary)
+	if enableSitemap {
+		publishCrawlEvent(CrawlEvent{
+			Type:      "tier_switch",
+			JobID:     jobID,
+			Progress:  "🗺️ Starting Tier 1: Sitemap Discovery",
+			Timestamp: time.Now(),
+			Tier:      "sitemap",
+		})
+		
+		sitemapURLs, err := crawlWithSitemaps(targetURL, jobID)
+		if err != nil {
+			publishCrawlEvent(CrawlEvent{
+				Type:      "error",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("❌ Sitemap crawling failed: %v", err),
+				Timestamp: time.Now(),
+				Tier:      "sitemap",
+				Error:     err.Error(),
+			})
+		} else {
+			allURLs = append(allURLs, sitemapURLs...)
+			tierStats.SitemapURLs = len(sitemapURLs)
+			if len(sitemapURLs) > 0 {
+				tierStats.TotalTiers++
+			}
+		}
+	}
+	
+	// Tier 2: HTML Link Crawling (Fallback)
+	shouldUseHTML := enableHTML && shouldFallbackToHTML(allURLs, config)
+	if shouldUseHTML {
+		publishCrawlEvent(CrawlEvent{
+			Type:      "tier_switch",
+			JobID:     jobID,
+			Progress:  "🔗 Starting Tier 2: HTML Link Discovery",
+			Timestamp: time.Now(),
+			Tier:      "html",
+		})
+		
+		htmlURLs, err := crawlWithHTML(targetURL, config, jobID)
+		if err != nil {
+			publishCrawlEvent(CrawlEvent{
+				Type:      "error",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("❌ HTML crawling failed: %v", err),
+				Timestamp: time.Now(),
+				Tier:      "html",
+				Error:     err.Error(),
+			})
+		} else {
+			// Merge and deduplicate
+			beforeCount := len(allURLs)
+			allURLs = removeDuplicateURLs(append(allURLs, htmlURLs...))
+			newURLs := len(allURLs) - beforeCount
+			tierStats.HTMLURLs = newURLs
+			if newURLs > 0 {
+				tierStats.TotalTiers++
+			}
+			
+			publishCrawlEvent(CrawlEvent{
+				Type:      "progress",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("🔗 HTML crawling added %d new URLs (total: %d)", newURLs, len(allURLs)),
+				Timestamp: time.Now(),
+				Tier:      "html",
+				Total:     len(allURLs),
+			})
+		}
+	}
+	
+	// Tier 3: Headless Browser (Last Resort)
+	shouldUseHeadless := enableHeadless && shouldFallbackToHeadless(allURLs, config)
+	if shouldUseHeadless {
+		publishCrawlEvent(CrawlEvent{
+			Type:      "tier_switch",
+			JobID:     jobID,
+			Progress:  "🤖 Starting Tier 3: Headless Browser",
+			Timestamp: time.Now(),
+			Tier:      "headless",
+		})
+		
+		headlessURLs, err := crawlWithRod(targetURL, jobID, config)
+		if err != nil {
+			publishCrawlEvent(CrawlEvent{
+				Type:      "error",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("❌ Headless crawling failed: %v", err),
+				Timestamp: time.Now(),
+				Tier:      "headless",
+				Error:     err.Error(),
+			})
+		} else {
+			// Merge and deduplicate
+			beforeCount := len(allURLs)
+			allURLs = removeDuplicateURLs(append(allURLs, headlessURLs...))
+			newURLs := len(allURLs) - beforeCount
+			tierStats.HeadlessURLs = newURLs
+			if newURLs > 0 {
+				tierStats.TotalTiers++
+			}
+			
+			publishCrawlEvent(CrawlEvent{
+				Type:      "progress",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("🤖 Headless crawling added %d new URLs (total: %d)", newURLs, len(allURLs)),
+				Timestamp: time.Now(),
+				Tier:      "headless",
+				Total:     len(allURLs),
+			})
+		}
+	}
+	
+	// Apply max URL limit
+	if config.MaxURLs > 0 && len(allURLs) > config.MaxURLs {
+		allURLs = allURLs[:config.MaxURLs]
+		publishCrawlEvent(CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("⚠️ Applied URL limit: truncated to %d URLs", config.MaxURLs),
+			Timestamp: time.Now(),
+		})
+	}
+	
+	// Calculate final stats
+	duration := time.Since(startTime)
+	urlsPerSecond := float64(len(allURLs)) / duration.Seconds()
+	
+	// Create structured result
+	result := &CrawlResult{
+		TargetURL:     targetURL,
+		CrawledAt:     time.Now(),
+		Duration:      duration.String(),
+		TotalURLs:     len(allURLs),
+		URLsPerSecond: fmt.Sprintf("%.2f", urlsPerSecond),
+		Settings: CrawlSettings{
+			Workers: config.Workers,
+			Delay:   config.Delay,
+			Depth:   config.Depth,
+		},
+		URLs: allURLs,
+	}
+	
+	// Send final completion message
+	completionMessage := fmt.Sprintf("✅ Three-tier crawling completed! Found %d URLs in %s (%.2f URLs/sec) using %d tiers", 
+		len(allURLs), duration.String(), urlsPerSecond, tierStats.TotalTiers)
+	
+	publishCrawlEvent(CrawlEvent{
+		Type:      "completed",
+		JobID:     jobID,
+		Progress:  completionMessage,
+		Timestamp: time.Now(),
+		Total:     len(allURLs),
+	})
+	
+	return result, nil
+}
+
+// shouldFallbackToHTML determines if HTML crawling should be used
+func shouldFallbackToHTML(currentURLs []string, config CrawlRequest) bool {
+	// Use HTML crawling if:
+	// 1. No URLs found from sitemap
+	// 2. Very few URLs found (less than 10)
+	// 3. User explicitly enabled HTML crawling
+	return len(currentURLs) < 10
+}
+
+// shouldFallbackToHeadless determines if headless browser crawling should be used
+func shouldFallbackToHeadless(currentURLs []string, config CrawlRequest) bool {
+	// Use headless crawling if:
+	// 1. Very few URLs found from previous tiers (less than 5)
+	// 2. User explicitly enabled headless crawling
+	return len(currentURLs) < 5
+}
+
+// crawlWithHTML performs HTML link crawling (wrapper around existing Colly logic)
+func crawlWithHTML(targetURL string, config CrawlRequest, jobID string) ([]string, error) {
+	// This calls the existing crawlWebsiteWithEvents function but extracts just the URL discovery part
+	result, err := crawlWebsiteWithEvents(targetURL, config.Depth, config.Workers, config.Delay, config.MaxURLs, jobID)
+	if err != nil {
+		return nil, err
+	}
+	return result.URLs, nil
+}
+
+// crawlWebsiteWithEvents performs async crawling with real-time events (legacy function for HTML crawling)
 func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr string, maxURLs int, jobID string) (*CrawlResult, error) {
 	// Parse delay
 	delay, err := time.ParseDuration(delayStr)
@@ -975,6 +1729,11 @@ func handleCrawl(w http.ResponseWriter, r *http.Request) {
 	if req.MaxURLs > 5000 {
 		req.MaxURLs = 5000
 	}
+	
+	// Set defaults for tier configuration
+	if req.HeadlessTimeout == 0 {
+		req.HeadlessTimeout = 30 // Default 30 seconds
+	}
 
 	// Use provided job ID or generate one
 	var jobID string
@@ -1029,7 +1788,7 @@ func handleCrawl(w http.ResponseWriter, r *http.Request) {
 			Timestamp: time.Now(),
 		})
 		
-		result, err := crawlWebsiteWithEvents(req.URL, req.Depth, req.Workers, req.Delay, req.MaxURLs, jobID)
+		result, err := crawlWebsiteWithTiers(req.URL, req, jobID)
 		
 		jobsMutex.Lock()
 		if err != nil {
