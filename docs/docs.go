@@ -44,7 +44,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/main.CrawlRequest"
+                            "$ref": "#/definitions/models.CrawlRequest"
                         }
                     }
                 ],
@@ -52,7 +52,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/main.CrawlResponse"
+                            "$ref": "#/definitions/models.CrawlResponse"
                         }
                     },
                     "400": {
@@ -95,7 +95,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/main.CrawlResult"
+                                "$ref": "#/definitions/models.CrawlResult"
                             }
                         }
                     },
@@ -137,7 +137,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/main.CrawlResult"
+                            "$ref": "#/definitions/models.CrawlResult"
                         }
                     },
                     "400": {
@@ -160,6 +160,29 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Check if the API server is running",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -204,7 +227,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/main.JobStatus"
+                                "$ref": "#/definitions/models.JobStatus"
                             }
                         }
                     },
@@ -246,7 +269,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/main.JobStatus"
+                            "$ref": "#/definitions/models.JobStatus"
                         }
                     },
                     "404": {
@@ -282,7 +305,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "main.CrawlRequest": {
+        "models.CrawlRequest": {
             "type": "object",
             "required": [
                 "url"
@@ -334,7 +357,7 @@ const docTemplate = `{
                 }
             }
         },
-        "main.CrawlResponse": {
+        "models.CrawlResponse": {
             "type": "object",
             "properties": {
                 "job_id": {
@@ -351,7 +374,7 @@ const docTemplate = `{
                 }
             }
         },
-        "main.CrawlResult": {
+        "models.CrawlResult": {
             "type": "object",
             "properties": {
                 "crawled_at": {
@@ -364,7 +387,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "settings": {
-                    "$ref": "#/definitions/main.CrawlSettings"
+                    "$ref": "#/definitions/models.CrawlSettings"
                 },
                 "target_url": {
                     "type": "string"
@@ -383,7 +406,7 @@ const docTemplate = `{
                 }
             }
         },
-        "main.CrawlSettings": {
+        "models.CrawlSettings": {
             "type": "object",
             "properties": {
                 "delay": {
@@ -397,7 +420,7 @@ const docTemplate = `{
                 }
             }
         },
-        "main.JobStatus": {
+        "models.JobStatus": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -417,10 +440,10 @@ const docTemplate = `{
                     "example": "Starting crawl..."
                 },
                 "request": {
-                    "$ref": "#/definitions/main.CrawlRequest"
+                    "$ref": "#/definitions/models.CrawlRequest"
                 },
                 "result": {
-                    "$ref": "#/definitions/main.CrawlResult"
+                    "$ref": "#/definitions/models.CrawlResult"
                 },
                 "status": {
                     "type": "string",

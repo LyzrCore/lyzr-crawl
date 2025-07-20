@@ -18,7 +18,7 @@ COPY . .
 
 # Generate Swagger docs
 RUN go install github.com/swaggo/swag/cmd/swag@latest
-RUN swag init -g api.go
+RUN swag init -g server.go
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o crawler .
@@ -41,8 +41,9 @@ COPY --from=builder /app/docs ./docs
 # Copy entrypoint script
 COPY entrypoint.sh .
 
-# Make binary and entrypoint executable
-RUN chmod +x ./crawler ./entrypoint.sh
+# Make binary and entrypoint executable, ensure Unix line endings
+RUN chmod +x ./crawler ./entrypoint.sh && \
+    sed -i 's/\r$//' ./entrypoint.sh
 
 # Expose port
 EXPOSE 8080

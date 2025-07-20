@@ -1,6 +1,6 @@
 basePath: /
 definitions:
-  main.CrawlRequest:
+  models.CrawlRequest:
     properties:
       delay:
         example: 200ms
@@ -38,7 +38,7 @@ definitions:
     required:
     - url
     type: object
-  main.CrawlResponse:
+  models.CrawlResponse:
     properties:
       job_id:
         example: 60f7b3b3b3b3b3b3b3b3b3b3
@@ -50,7 +50,7 @@ definitions:
         example: accepted
         type: string
     type: object
-  main.CrawlResult:
+  models.CrawlResult:
     properties:
       crawled_at:
         type: string
@@ -59,7 +59,7 @@ definitions:
       id:
         type: string
       settings:
-        $ref: '#/definitions/main.CrawlSettings'
+        $ref: '#/definitions/models.CrawlSettings'
       target_url:
         type: string
       total_urls:
@@ -71,7 +71,7 @@ definitions:
       urls_per_second:
         type: string
     type: object
-  main.CrawlSettings:
+  models.CrawlSettings:
     properties:
       delay:
         type: string
@@ -80,7 +80,7 @@ definitions:
       workers:
         type: integer
     type: object
-  main.JobStatus:
+  models.JobStatus:
     properties:
       created_at:
         example: "2023-07-18T10:30:45Z"
@@ -95,9 +95,9 @@ definitions:
         example: Starting crawl...
         type: string
       request:
-        $ref: '#/definitions/main.CrawlRequest'
+        $ref: '#/definitions/models.CrawlRequest'
       result:
-        $ref: '#/definitions/main.CrawlResult'
+        $ref: '#/definitions/models.CrawlResult'
       status:
         example: completed
         type: string
@@ -132,14 +132,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/main.CrawlRequest'
+          $ref: '#/definitions/models.CrawlRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/main.CrawlResponse'
+            $ref: '#/definitions/models.CrawlResponse'
         "400":
           description: Bad Request
           schema:
@@ -167,7 +167,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/main.CrawlResult'
+              $ref: '#/definitions/models.CrawlResult'
             type: array
         "503":
           description: Service Unavailable
@@ -195,7 +195,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/main.CrawlResult'
+            $ref: '#/definitions/models.CrawlResult'
         "400":
           description: Bad Request
           schema:
@@ -217,6 +217,21 @@ paths:
       summary: Get specific crawl result
       tags:
       - crawls
+  /health:
+    get:
+      description: Check if the API server is running
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
   /jobs:
     get:
       consumes:
@@ -239,7 +254,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/main.JobStatus'
+              $ref: '#/definitions/models.JobStatus'
             type: array
         "503":
           description: Service Unavailable
@@ -267,7 +282,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/main.JobStatus'
+            $ref: '#/definitions/models.JobStatus'
         "404":
           description: Not Found
           schema:

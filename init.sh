@@ -51,15 +51,26 @@ install_dependencies() {
 generate_swagger() {
     print_status "Generating Swagger documentation..."
     
-    # Install swag if not present
-    if ! command -v swag &> /dev/null; then
+    # Install swag if not present and find the correct path
+    SWAG_PATH=""
+    if command -v swag &> /dev/null; then
+        SWAG_PATH="swag"
+    elif [ -f "$(go env GOPATH)/bin/swag" ]; then
+        SWAG_PATH="$(go env GOPATH)/bin/swag"
+    else
         print_status "Installing swag CLI tool..."
         go install github.com/swaggo/swag/cmd/swag@latest
+        SWAG_PATH="$(go env GOPATH)/bin/swag"
     fi
     
-    # Generate docs
-    swag init -g api.go
-    print_success "Swagger documentation generated"
+    # Generate docs using the correct path
+    if [ -x "$SWAG_PATH" ]; then
+        $SWAG_PATH init -g server.go
+        print_success "Swagger documentation generated"
+    else
+        print_error "Failed to install or find swag CLI tool"
+        exit 1
+    fi
 }
 
 # Start all services with Docker Compose
@@ -69,7 +80,7 @@ start_all_services() {
     print_status ""
     
     # Build and start all services
-    docker-compose up --build -d
+    docker compose up --build -d
     
     print_success "All services started!"
     print_status ""
@@ -87,16 +98,16 @@ start_all_services() {
     print_status "  GET  /health - Health check"
     print_status ""
     print_status "Useful commands:"
-    print_status "  docker-compose logs -f           # View logs"
-    print_status "  docker-compose logs -f crawler-api  # API logs only"
-    print_status "  docker-compose down              # Stop all services"
-    print_status "  docker-compose restart crawler-api  # Restart API"
+    print_status "  docker compose logs -f           # View logs"
+    print_status "  docker compose logs -f crawler-api  # API logs only"
+    print_status "  docker compose down              # Stop all services"
+    print_status "  docker compose restart crawler-api  # Restart API"
 }
 
 # Start only dependencies (MongoDB + RabbitMQ)
 start_dependencies() {
     print_status "Starting dependencies (MongoDB + RabbitMQ) only..."
-    docker-compose up -d mongodb rabbitmq
+    docker compose up -d mongodb rabbitmq
     
     print_success "Dependencies started!"
     print_status ""
@@ -111,7 +122,7 @@ start_local_api() {
     print_status "API will be available at: http://localhost:8080"
     print_status "Swagger UI will be available at: http://localhost:8080/swagger/index.html"
     print_status ""
-    print_warning "Note: Make sure dependencies are running: docker-compose up -d mongodb rabbitmq"
+    print_warning "Note: Make sure dependencies are running: docker compose up -d mongodb rabbitmq"
     print_status ""
     print_success "Starting server..."
     
@@ -154,8 +165,8 @@ main() {
         print_status "  ./init.sh --local     # Run API locally"
         print_status ""
         print_status "⚡ Manual deployment:"
-        print_status "  docker-compose up -d  # Start all services"
-        print_status "  docker-compose up -d mongodb rabbitmq  # Dependencies only"
+        print_status "  docker compose up -d  # Start all services"
+        print_status "  docker compose up -d mongodb rabbitmq  # Dependencies only"
     fi
 }
 
@@ -184,7 +195,7 @@ show_help() {
     echo ""
     echo "⚡ Manual:"
     echo "  ./init.sh --dev     # Setup only"
-    echo "  docker-compose up -d  # Start services manually"
+    echo "  docker compose up -d  # Start services manually"
     echo ""
     echo "Services:"
     echo "  - MongoDB: localhost:27017 (crawler/crawler123)"
@@ -193,9 +204,9 @@ show_help() {
     echo "  - Swagger UI: localhost:8080/swagger/index.html"
     echo ""
     echo "Useful commands:"
-    echo "  docker-compose logs -f           # View all logs"
-    echo "  docker-compose down              # Stop all services"
-    echo "  docker-compose restart crawler-api  # Restart API only"
+    echo "  docker compose logs -f           # View all logs"
+    echo "  docker compose down              # Stop all services"
+    echo "  docker compose restart crawler-api  # Restart API only"
 }
 
 # Parse command line arguments
@@ -237,7 +248,7 @@ if [[ "$DEV_MODE" == "true" ]]; then
     generate_swagger
     print_success "Development setup complete"
     echo ""
-    print_status "To start services: docker-compose up -d"
+    print_status "To start services: docker compose up -d"
     print_status "To start API: go run . -api -port=8080"
 else
     main

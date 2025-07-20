@@ -11,12 +11,37 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gocolly/colly/v2"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+// cleanURL removes whitespace, normalizes the URL, and handles common issues
+func cleanURL(rawURL string) string {
+	// Trim all whitespace characters including newlines, tabs, etc.
+	cleaned := strings.TrimSpace(rawURL)
+	
+	// Remove any control characters and extra whitespace
+	cleaned = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return -1 // Remove control characters
+		}
+		return r
+	}, cleaned)
+	
+	// Replace any remaining newlines or tabs with empty string
+	cleaned = strings.ReplaceAll(cleaned, "\n", "")
+	cleaned = strings.ReplaceAll(cleaned, "\t", "")
+	cleaned = strings.ReplaceAll(cleaned, "\r", "")
+	
+	// Trim again after cleanup
+	cleaned = strings.TrimSpace(cleaned)
+	
+	return cleaned
+}
 
 // CrawlResult represents a crawl session stored in MongoDB
 type CrawlResult struct {
@@ -59,7 +84,7 @@ func main() {
 
 	// Check if running in API mode
 	if *apiMode {
-		startAPIServer(*port, *mongoURI, *mongoDB, *rabbitMQURL)
+		StartAPIServer(*port, *mongoURI, *mongoDB, *rabbitMQURL)
 		return
 	}
 	
@@ -148,7 +173,7 @@ func main() {
 
 	// Find all links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
-		link := e.Attr("href")
+		link := cleanURL(e.Attr("href"))
 		
 		// Skip empty links
 		if link == "" {
