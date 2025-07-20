@@ -358,6 +358,9 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 			r.Headers.Set(key, value)
 		}
 		
+		// Disable compression to get raw HTML for debugging
+		r.Headers.Set("Accept-Encoding", "identity")
+		
 		count := atomic.AddInt64(&pagesCrawled, 1)
 		
 		// Publish progress event (async, non-blocking)
@@ -369,6 +372,50 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 			PageCount: int(count),
 		})
 	})
+
+	// Add response debugging
+	c.OnResponse(func(r *colly.Response) {
+		bodyPreview := string(r.Body)
+		if len(bodyPreview) > 200 {
+			bodyPreview = bodyPreview[:200] + "..."
+		}
+		go PublishCrawlEvent(models.CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("📄 Response: %d bytes, status %d, content-type: %s", len(r.Body), r.StatusCode, r.Headers.Get("Content-Type")),
+			Timestamp: time.Now(),
+		})
+		go PublishCrawlEvent(models.CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("📄 Content preview: %s", bodyPreview),
+			Timestamp: time.Now(),
+		})
+	})
+
+	// Add HTML debugging  
+	c.OnHTML("*", func(e *colly.HTMLElement) {
+		if e.Request.Depth == 0 { // Only log for the main page
+			linkCount := len(e.ChildAttrs("a", "href"))
+			go PublishCrawlEvent(models.CrawlEvent{
+				Type:      "progress",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("🔍 Found %d total <a> tags on main page", linkCount),
+				Timestamp: time.Now(),
+			})
+		}
+	})
+
+	// Add error debugging
+	c.OnError(func(r *colly.Response, err error) {
+		go PublishCrawlEvent(models.CrawlEvent{
+			Type:      "error",
+			JobID:     jobID,
+			Progress:  fmt.Sprintf("❌ Colly error: %v for URL: %s", err, r.Request.URL.String()),
+			Timestamp: time.Now(),
+			Error:     err.Error(),
+		})
+	})
 	
 	startTime := time.Now()
 
@@ -376,6 +423,15 @@ func crawlWebsiteWithEvents(targetURL string, depth, workers int, delayStr strin
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		link := cleanURL(e.Attr("href"))
 		if link == "" || shouldSkipURL(link) {
+			// Debug: log why links are being skipped
+			if link == "" {
+				go PublishCrawlEvent(models.CrawlEvent{
+					Type:      "progress",
+					JobID:     jobID,
+					Progress:  fmt.Sprintf("🔍 Debug: Empty link found on %s", e.Request.URL.String()),
+					Timestamp: time.Now(),
+				})
+			}
 			return
 		}
 

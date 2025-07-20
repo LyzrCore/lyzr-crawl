@@ -1,4 +1,4 @@
-go build -o crawler .
+go build -o crawler-app .
 go install github.com/swaggo/swag/cmd/swag@latest
 $(go env GOPATH)/bin/swag init -g server.go
 go mod tidy

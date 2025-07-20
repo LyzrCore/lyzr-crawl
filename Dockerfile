@@ -41,7 +41,6 @@ COPY --from=builder /app/docs ./docs
 # Copy entrypoint script
 COPY entrypoint.sh .
 
-# Make binary and entrypoint executable, ensure Unix line endings
 RUN chmod +x ./crawler ./entrypoint.sh && \
     sed -i 's/\r$//' ./entrypoint.sh
 
