@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"time"
 )
@@ -25,12 +27,37 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// Hijack implements http.Hijacker for WebSocket support
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
 // LoggingMiddleware logs all HTTP requests and responses
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		// Read request body
+		// Check if this is a WebSocket upgrade request
+		isWebSocket := r.Header.Get("Upgrade") == "websocket" && r.Header.Get("Connection") == "Upgrade"
+
+		// For WebSocket requests, log basic info and pass through without wrapping
+		if isWebSocket {
+			log.Printf("[WEBSOCKET REQUEST] %s %s | IP: %s | User-Agent: %s",
+				r.Method,
+				r.URL.Path,
+				getClientIP(r),
+				r.UserAgent(),
+			)
+			next.ServeHTTP(w, r)
+			duration := time.Since(start)
+			log.Printf("[WEBSOCKET] %s %s | Duration: %v", r.Method, r.URL.Path, duration)
+			return
+		}
+
+		// Read request body for non-WebSocket requests
 		var requestBody []byte
 		if r.Body != nil {
 			requestBody, _ = io.ReadAll(r.Body)

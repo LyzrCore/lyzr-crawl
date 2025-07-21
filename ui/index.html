@@ -483,7 +483,8 @@
                     const response = await fetch(`${this.apiUrl}/crawl`, {
                         method: 'POST',
                         headers: {
-                            'Content-Type': 'application/json'
+                            'Content-Type': 'application/json',
+                            'X-API-Key': 'sk-default-cnsksmcnneheufhruenchguenhgcneirhgcehlnhacueraicnrhecnleiurcnhiunrciuahcnuh'
                         },
                         body: JSON.stringify(formData)
                     });

@@ -54,6 +54,9 @@ func StartAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
 	// Add logging middleware first
 	r.Use(middleware.LoggingMiddleware)
 
+	// Add API key authentication middleware
+	r.Use(middleware.APIKeyMiddleware)
+
 	// Add CORS middleware
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

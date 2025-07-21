@@ -3,6 +3,9 @@
 # Web Crawler API Initialization Script
 # This script prepares the application and generates documentation
 
+docker compose down  # Stop any running containers first
+docker system prune -f  # Clean up any stopped containers
+
 set -e  # Exit on any error
 
 echo "🚀 Initializing Web Crawler API..."
