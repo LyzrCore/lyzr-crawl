@@ -24,8 +24,79 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/content": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Fetches webpage content and returns it in HTML, clean text, and markdown formats",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "content"
+                ],
+                "summary": "Get webpage content in all formats (HTML, text, markdown)",
+                "parameters": [
+                    {
+                        "description": "Content request with URL or URLs",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.ContentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.ContentBatchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/crawl": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Initiates a web crawling job for the specified URL with configurable parameters",
                 "consumes": [
                     "application/json"
@@ -63,6 +134,15 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
@@ -92,6 +172,11 @@ const docTemplate = `{
         },
         "/jobs": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Retrieves a list of recent jobs from the database",
                 "consumes": [
                     "application/json"
@@ -128,6 +213,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "503": {
                         "description": "Service Unavailable",
                         "schema": {
@@ -142,6 +236,11 @@ const docTemplate = `{
         },
         "/jobs/{id}": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Retrieves the current status and progress of a crawl job",
                 "consumes": [
                     "application/json"
@@ -167,6 +266,15 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/models.JobStatus"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "404": {
@@ -202,6 +310,91 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "models.ContentBatchResponse": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.ContentResponse"
+                    }
+                },
+                "success": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.ContentRequest": {
+            "type": "object",
+            "properties": {
+                "concurrency": {
+                    "type": "integer",
+                    "example": 50
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.com"
+                },
+                "urls": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "[\"https://example.com\"",
+                        " \"https://another.com\"]"
+                    ]
+                }
+            }
+        },
+        "models.ContentResponse": {
+            "type": "object",
+            "properties": {
+                "content_type": {
+                    "type": "string",
+                    "example": "text/html; charset=UTF-8"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "markdown": {
+                    "type": "string",
+                    "example": "# Example\n\nClean markdown content"
+                },
+                "sizes": {
+                    "$ref": "#/definitions/models.ContentSizes"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://example.com"
+                }
+            }
+        },
+        "models.ContentSizes": {
+            "type": "object",
+            "properties": {
+                "markdown": {
+                    "type": "integer",
+                    "example": 1680
+                }
+            }
+        },
         "models.CrawlRequest": {
             "type": "object",
             "required": [

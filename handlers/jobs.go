@@ -23,7 +23,9 @@ import (
 // @Produce json
 // @Param id path string true "Job ID"
 // @Success 200 {object} models.JobStatus
+// @Failure 401 {object} map[string]string
 // @Failure 404 {object} map[string]string
+// @Security ApiKeyAuth
 // @Router /jobs/{id} [get]
 func HandleJobStatus(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -60,7 +62,9 @@ func HandleJobStatus(w http.ResponseWriter, r *http.Request) {
 // @Param limit query int false "Maximum number of results to return" default(10)
 // @Param status query string false "Filter by job status (running, completed, failed)"
 // @Success 200 {array} models.JobStatus
+// @Failure 401 {object} map[string]string
 // @Failure 503 {object} map[string]string
+// @Security ApiKeyAuth
 // @Router /jobs [get]
 func HandleGetJobs(w http.ResponseWriter, r *http.Request) {
 	if config.JobsCollection == nil {

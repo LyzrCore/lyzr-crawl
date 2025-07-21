@@ -56,7 +56,7 @@ func StartAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
 			// Set CORS headers for all requests
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 			
 			// Handle preflight requests
@@ -68,6 +68,7 @@ func StartAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
 			next.ServeHTTP(w, r)
 		})
 	})
+
 	
 	// Add global OPTIONS handler for all routes
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +85,7 @@ func StartAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
 	// Define routes
 	r.HandleFunc("/", handlers.HandleHealth).Methods("GET")
 	r.HandleFunc("/crawl", handlers.HandleCrawl).Methods("POST", "OPTIONS")
+	r.HandleFunc("/content", handlers.HandleGetContent).Methods("POST", "OPTIONS")
 	r.HandleFunc("/jobs", handlers.HandleGetJobs).Methods("GET", "OPTIONS")
 	r.HandleFunc("/jobs/{id}", handlers.HandleJobStatus).Methods("GET", "OPTIONS")
 	r.HandleFunc("/ws/{id}", handlers.HandleWebSocket).Methods("GET", "OPTIONS")
@@ -96,6 +98,7 @@ func StartAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
 	log.Printf("Endpoints:")
 	log.Printf("  GET  / - Health check")
 	log.Printf("  POST /crawl - Start a new crawl")
+	log.Printf("  POST /content - Get webpage content")
 	log.Printf("  GET  /jobs - List recent jobs")
 	log.Printf("  GET  /jobs/{id} - Get job status")
 	log.Printf("  GET  /ws/{id} - WebSocket live updates")

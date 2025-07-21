@@ -28,7 +28,6 @@ func InitMongoDB(mongoURI, dbName string) error {
 
 	config.MongoClient = client
 	db := client.Database(dbName)
-	config.CrawlCollection = db.Collection("crawls")
 	config.JobsCollection = db.Collection("jobs")
 
 	log.Printf("Connected to MongoDB: %s/%s", mongoURI, dbName)

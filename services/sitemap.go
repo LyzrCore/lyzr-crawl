@@ -15,6 +15,11 @@ import (
 
 // DiscoverSitemaps discovers sitemap URLs from common locations
 func DiscoverSitemaps(baseURL, jobID string) []string {
+	return DiscoverSitemapsWithFallback(baseURL, jobID, nil)
+}
+
+// DiscoverSitemapsWithFallback discovers sitemap URLs from common locations with optional robots.txt fallback
+func DiscoverSitemapsWithFallback(baseURL, jobID string, robotsSitemaps []string) []string {
 	var sitemapURLs []string
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -24,7 +29,32 @@ func DiscoverSitemaps(baseURL, jobID string) []string {
 	baseScheme := parsed.Scheme
 	baseHost := parsed.Host
 	
-	// Common sitemap locations to check
+	// If robots.txt sitemaps were provided (fallback mode), use them directly
+	if robotsSitemaps != nil && len(robotsSitemaps) > 0 {
+		PublishCrawlEvent(models.CrawlEvent{
+			Type:      "progress",
+			JobID:     jobID,
+			Progress:  "🤖 Using sitemaps from robots.txt fallback...",
+			Timestamp: time.Now(),
+			Tier:      "sitemap",
+		})
+		
+		for _, sitemapURL := range robotsSitemaps {
+			// Don't check existence since we already know the main site is blocked
+			sitemapURLs = append(sitemapURLs, sitemapURL)
+			PublishCrawlEvent(models.CrawlEvent{
+				Type:      "sitemap_discovered",
+				JobID:     jobID,
+				URL:       sitemapURL,
+				Progress:  fmt.Sprintf("📍 Using sitemap from robots.txt: %s", sitemapURL),
+				Timestamp: time.Now(),
+				Tier:      "sitemap",
+			})
+		}
+		return sitemapURLs
+	}
+	
+	// Normal discovery mode - check common sitemap locations
 	candidates := []string{
 		fmt.Sprintf("%s://%s/sitemap.xml", baseScheme, baseHost),
 		fmt.Sprintf("%s://%s/sitemap_index.xml", baseScheme, baseHost),
@@ -57,7 +87,7 @@ func DiscoverSitemaps(baseURL, jobID string) []string {
 	
 	// Also check robots.txt for sitemap references
 	robotsURL := fmt.Sprintf("%s://%s/robots.txt", baseScheme, baseHost)
-	robotsSitemaps := ExtractSitemapsFromRobots(robotsURL)
+	robotsSitemaps = ExtractSitemapsFromRobots(robotsURL)
 	for _, sitemapURL := range robotsSitemaps {
 		if CheckSitemapExists(sitemapURL) {
 			sitemapURLs = append(sitemapURLs, sitemapURL)

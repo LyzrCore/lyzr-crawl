@@ -48,14 +48,36 @@ func CrawlWebsiteWithTiers(targetURL string, crawlConfig models.CrawlRequest, jo
 	// Try URL fallback to find an accessible URL
 	actualURL, fallbackInfo := utils.FindAccessibleURL(targetURL, jobID)
 	if !fallbackInfo.Success {
+		// If URL fallback fails, try to find sitemaps via robots.txt
 		PublishCrawlEvent(models.CrawlEvent{
-			Type:      "error",
+			Type:      "progress",
 			JobID:     jobID,
-			Progress:  fmt.Sprintf("❌ URL and all fallbacks failed: %v", fallbackInfo.Error),
+			Progress:  fmt.Sprintf("⚠️ URL and all fallbacks failed: %v - trying robots.txt fallback", fallbackInfo.Error),
 			Timestamp: time.Now(),
-			Error:     fallbackInfo.Error,
+			Tier:      "sitemap",
 		})
-		return nil, fmt.Errorf("URL and all fallbacks are inaccessible: %v", fallbackInfo.Error)
+		
+		robotsSitemaps := ParseRobotsTxt(targetURL, jobID)
+		if len(robotsSitemaps) > 0 {
+			// Use the original URL but indicate we're using robots.txt approach
+			actualURL = targetURL
+			PublishCrawlEvent(models.CrawlEvent{
+				Type:      "progress",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("✅ Found %d sitemap(s) via robots.txt fallback", len(robotsSitemaps)),
+				Timestamp: time.Now(),
+				Tier:      "sitemap",
+			})
+		} else {
+			PublishCrawlEvent(models.CrawlEvent{
+				Type:      "error",
+				JobID:     jobID,
+				Progress:  fmt.Sprintf("❌ URL and all fallbacks failed: %v", fallbackInfo.Error),
+				Timestamp: time.Now(),
+				Error:     fallbackInfo.Error,
+			})
+			return nil, fmt.Errorf("URL and all fallbacks are inaccessible: %v", fallbackInfo.Error)
+		}
 	}
 	
 	// If a fallback was used, publish success event
@@ -96,7 +118,13 @@ func CrawlWebsiteWithTiers(targetURL string, crawlConfig models.CrawlRequest, jo
 			Tier:      "sitemap",
 		})
 		
-		sitemapURLs, err := CrawlWithSitemaps(actualURL, jobID)
+		// If we used robots.txt fallback, pass those sitemaps to CrawlWithSitemaps
+		var robotsSitemaps []string
+		if !fallbackInfo.Success {
+			robotsSitemaps = ParseRobotsTxt(targetURL, jobID)
+		}
+		
+		sitemapURLs, err := CrawlWithSitemapsAndFallback(actualURL, jobID, robotsSitemaps)
 		if err != nil {
 			PublishCrawlEvent(models.CrawlEvent{
 				Type:      "error",
@@ -204,10 +232,15 @@ func CrawlWebsiteWithTiers(targetURL string, crawlConfig models.CrawlRequest, jo
 
 // CrawlWithSitemaps performs sitemap-based crawling
 func CrawlWithSitemaps(targetURL, jobID string) ([]string, error) {
+	return CrawlWithSitemapsAndFallback(targetURL, jobID, nil)
+}
+
+// CrawlWithSitemapsAndFallback performs sitemap-based crawling with optional robots.txt fallback
+func CrawlWithSitemapsAndFallback(targetURL, jobID string, robotsSitemaps []string) ([]string, error) {
 	var allURLs []string
 	
-	// Discover sitemaps
-	sitemapURLs := DiscoverSitemaps(targetURL, jobID)
+	// Discover sitemaps with optional robots.txt fallback
+	sitemapURLs := DiscoverSitemapsWithFallback(targetURL, jobID, robotsSitemaps)
 	if len(sitemapURLs) == 0 {
 		PublishCrawlEvent(models.CrawlEvent{
 			Type:      "progress",

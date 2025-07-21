@@ -11,11 +11,10 @@ import (
 
 // Global variables for the API server
 var (
-	MongoClient     *mongo.Client
-	CrawlCollection *mongo.Collection
-	JobsCollection  *mongo.Collection
-	ActiveJobs      = make(map[string]*models.JobStatus)
-	JobsMutex       sync.RWMutex
+	MongoClient    *mongo.Client
+	JobsCollection *mongo.Collection
+	ActiveJobs     = make(map[string]*models.JobStatus)
+	JobsMutex      sync.RWMutex
 	
 	// WebSocket upgrader
 	Upgrader = websocket.Upgrader{

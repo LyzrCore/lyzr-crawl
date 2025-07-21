@@ -1,5 +1,66 @@
 basePath: /
 definitions:
+  models.ContentBatchResponse:
+    properties:
+      failed:
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/models.ContentResponse'
+        type: array
+      success:
+        type: integer
+      total:
+        type: integer
+    type: object
+  models.ContentRequest:
+    properties:
+      concurrency:
+        example: 50
+        type: integer
+      url:
+        example: https://example.com
+        type: string
+      urls:
+        example:
+        - '["https://example.com"'
+        - ' "https://another.com"]'
+        items:
+          type: string
+        type: array
+    type: object
+  models.ContentResponse:
+    properties:
+      content_type:
+        example: text/html; charset=UTF-8
+        type: string
+      error:
+        type: string
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      markdown:
+        example: |-
+          # Example
+
+          Clean markdown content
+        type: string
+      sizes:
+        $ref: '#/definitions/models.ContentSizes'
+      status_code:
+        example: 200
+        type: integer
+      url:
+        example: https://example.com
+        type: string
+    type: object
+  models.ContentSizes:
+    properties:
+      markdown:
+        example: 1680
+        type: integer
+    type: object
   models.CrawlRequest:
     properties:
       delay:
@@ -120,6 +181,49 @@ info:
   title: Web Crawler API
   version: "1.0"
 paths:
+  /content:
+    post:
+      consumes:
+      - application/json
+      description: Fetches webpage content and returns it in HTML, clean text, and
+        markdown formats
+      parameters:
+      - description: Content request with URL or URLs
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.ContentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ContentBatchResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - ApiKeyAuth: []
+      summary: Get webpage content in all formats (HTML, text, markdown)
+      tags:
+      - content
   /crawl:
     post:
       consumes:
@@ -146,6 +250,14 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - ApiKeyAuth: []
       summary: Start a new web crawl
       tags:
       - crawl
@@ -188,12 +300,20 @@ paths:
             items:
               $ref: '#/definitions/models.JobStatus'
             type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "503":
           description: Service Unavailable
           schema:
             additionalProperties:
               type: string
             type: object
+      security:
+      - ApiKeyAuth: []
       summary: List recent jobs
       tags:
       - jobs
@@ -215,12 +335,20 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/models.JobStatus'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
             additionalProperties:
               type: string
             type: object
+      security:
+      - ApiKeyAuth: []
       summary: Get crawl job status
       tags:
       - jobs

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"crawler/config"
 	"crawler/models"
 	"crawler/services"
@@ -23,6 +22,8 @@ import (
 // @Param request body models.CrawlRequest true "Crawl parameters"
 // @Success 200 {object} models.CrawlResponse
 // @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Security ApiKeyAuth
 // @Router /crawl [post]
 func HandleCrawl(w http.ResponseWriter, r *http.Request) {
 	var req models.CrawlRequest
@@ -122,18 +123,8 @@ func HandleCrawl(w http.ResponseWriter, r *http.Request) {
 		} else {
 			job.Status = "completed"
 			
-			// Save crawl result to MongoDB if connected and get the inserted ID
-			if config.CrawlCollection != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				insertResult, err := config.CrawlCollection.InsertOne(ctx, result)
-				if err == nil {
-					// Update the result with the actual MongoDB ID
-					if oid, ok := insertResult.InsertedID.(primitive.ObjectID); ok {
-						result.ID = oid
-					}
-				}
-			}
+			// Generate ID for the result (no separate crawls collection needed)
+			result.ID = primitive.NewObjectID()
 			
 			job.Result = result
 			
