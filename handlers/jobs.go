@@ -6,6 +6,7 @@ import (
 	"crawler/models"
 	"crawler/services"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -30,6 +31,8 @@ import (
 func HandleJobStatus(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	jobID := vars["id"]
+	
+	log.Printf("[JOBS API] Status request for job ID: %s", jobID)
 
 	// First check memory for active jobs (fastest)
 	config.JobsMutex.RLock()
@@ -37,18 +40,23 @@ func HandleJobStatus(w http.ResponseWriter, r *http.Request) {
 	config.JobsMutex.RUnlock()
 
 	if exists {
+		log.Printf("[JOBS API] Found job %s in memory - Status: %s", jobID, job.Status)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(job)
 		return
 	}
 
+	log.Printf("[JOBS API] Job %s not in memory, checking MongoDB", jobID)
+	
 	// If not in memory, check MongoDB
 	job, err := services.GetJobFromMongoDB(jobID)
 	if err != nil {
+		log.Printf("[JOBS API] Job %s not found in MongoDB: %v", jobID, err)
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
 
+	log.Printf("[JOBS API] Found job %s in MongoDB - Status: %s", jobID, job.Status)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(job)
 }
@@ -67,7 +75,10 @@ func HandleJobStatus(w http.ResponseWriter, r *http.Request) {
 // @Security ApiKeyAuth
 // @Router /jobs [get]
 func HandleGetJobs(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[JOBS API] List jobs request received")
+	
 	if config.JobsCollection == nil {
+		log.Printf("[JOBS API] ERROR: Jobs collection not available")
 		http.Error(w, "Jobs collection not available", http.StatusServiceUnavailable)
 		return
 	}
@@ -82,6 +93,8 @@ func HandleGetJobs(w http.ResponseWriter, r *http.Request) {
 			limit = l
 		}
 	}
+	
+	log.Printf("[JOBS API] Query parameters - Limit: %d, Status filter: %s", limit, statusFilter)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -96,6 +109,7 @@ func HandleGetJobs(w http.ResponseWriter, r *http.Request) {
 	opts := options.Find().SetLimit(limit).SetSort(bson.D{{Key: "created_at", Value: -1}})
 	cursor, err := config.JobsCollection.Find(ctx, filter, opts)
 	if err != nil {
+		log.Printf("[JOBS API] ERROR: Database find failed: %v", err)
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
@@ -103,10 +117,12 @@ func HandleGetJobs(w http.ResponseWriter, r *http.Request) {
 
 	var jobs []models.JobStatus
 	if err := cursor.All(ctx, &jobs); err != nil {
+		log.Printf("[JOBS API] ERROR: Failed to decode jobs: %v", err)
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
+	log.Printf("[JOBS API] Returning %d jobs (filter: %s, limit: %d)", len(jobs), statusFilter, limit)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(jobs)
 }

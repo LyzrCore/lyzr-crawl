@@ -2,6 +2,7 @@ package main
 
 import (
 	"crawler/handlers"
+	"crawler/middleware"
 	"crawler/services"
 	"log"
 	"net/http"
@@ -49,6 +50,9 @@ func StartAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
 
 	// Create router
 	r := mux.NewRouter()
+
+	// Add logging middleware first
+	r.Use(middleware.LoggingMiddleware)
 
 	// Add CORS middleware
 	r.Use(func(next http.Handler) http.Handler {

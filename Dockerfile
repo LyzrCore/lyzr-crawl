@@ -26,8 +26,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o crawler .
 # Final stage - minimal image
 FROM alpine:latest
 
-# Install curl for health checks and ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates curl tzdata
+# Install curl for health checks, ca-certificates for HTTPS, and Firefox for headless browsing
+RUN apk --no-cache add ca-certificates curl tzdata firefox
 
 # Create app directory
 WORKDIR /root/

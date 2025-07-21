@@ -21,18 +21,22 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	jobID := vars["id"]
 
+	log.Printf("[WEBSOCKET] New WebSocket connection request for job: %s", jobID)
+
 	// Upgrade HTTP connection to WebSocket
 	conn, err := config.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("WebSocket upgrade failed: %v", err)
+		log.Printf("[WEBSOCKET] WebSocket upgrade failed for job %s: %v", jobID, err)
 		return
 	}
 	defer conn.Close()
 
+	log.Printf("[WEBSOCKET] WebSocket connection established for job: %s", jobID)
+
 	// Create RabbitMQ queue for this job
 	queueName, err := services.CreateJobQueue(jobID)
 	if err != nil {
-		log.Printf("Failed to create job queue: %v", err)
+		log.Printf("[WEBSOCKET] Failed to create job queue for %s: %v", jobID, err)
 		conn.WriteJSON(models.WebSocketMessage{
 			Type:      "error",
 			JobID:     jobID,
@@ -42,6 +46,8 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[WEBSOCKET] Created RabbitMQ queue %s for job %s", queueName, jobID)
+
 	// Send initial connection confirmation
 	initialMessage := models.WebSocketMessage{
 		Type:      "connected",
@@ -50,9 +56,11 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Timestamp: time.Now(),
 	}
 	if err := conn.WriteJSON(initialMessage); err != nil {
-		log.Printf("Failed to send initial message: %v", err)
+		log.Printf("[WEBSOCKET] Failed to send initial message for job %s: %v", jobID, err)
 		return
 	}
+
+	log.Printf("[WEBSOCKET] Sent initial connection message for job %s", jobID)
 
 	// Create channels for event consumption
 	eventChan := make(chan models.CrawlEvent, 100)
@@ -60,7 +68,7 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Start consuming events from RabbitMQ
 	if err := services.ConsumeJobEvents(queueName, eventChan, stopChan); err != nil {
-		log.Printf("Failed to start consuming events: %v", err)
+		log.Printf("[WEBSOCKET] Failed to start consuming events for job %s: %v", jobID, err)
 		conn.WriteJSON(models.WebSocketMessage{
 			Type:      "error",
 			JobID:     jobID,
@@ -70,28 +78,33 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[WEBSOCKET] Started consuming events for job %s", jobID)
+
 	// Handle WebSocket connection lifecycle
 	go func() {
 		// Read messages from client (mainly for ping/pong)
 		for {
 			_, _, err := conn.ReadMessage()
 			if err != nil {
-				log.Printf("WebSocket read error: %v", err)
+				log.Printf("[WEBSOCKET] WebSocket read error for job %s: %v", jobID, err)
 				stopChan <- true
 				break
 			}
 		}
 	}()
 
+	eventCount := 0
 	// Stream events from RabbitMQ to WebSocket
 	for {
 		select {
 		case event, ok := <-eventChan:
 			if !ok {
-				// Event channel closed
+				log.Printf("[WEBSOCKET] Event channel closed for job %s", jobID)
 				return
 			}
 
+			eventCount++
+			
 			// Convert CrawlEvent to WebSocketMessage
 			wsMessage := models.WebSocketMessage{
 				Type:      event.Type,
@@ -107,12 +120,18 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 			// Send to WebSocket client
 			if err := conn.WriteJSON(wsMessage); err != nil {
-				log.Printf("Failed to send WebSocket message: %v", err)
+				log.Printf("[WEBSOCKET] Failed to send message #%d for job %s: %v", eventCount, jobID, err)
 				stopChan <- true
 				return
 			}
 
+			// Log completion events
+			if event.Type == "completed" {
+				log.Printf("[WEBSOCKET] Job %s completed, sent %d events total", jobID, eventCount)
+			}
+
 		case <-stopChan:
+			log.Printf("[WEBSOCKET] Connection closed for job %s after %d events", jobID, eventCount)
 			return
 		}
 	}

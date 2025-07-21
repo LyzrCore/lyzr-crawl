@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 )
 
 // cleanContentForLLM extracts and cleans text content from HTML for LLM consumption
@@ -414,8 +416,50 @@ func HandleGetContent(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(batchResponse)
 }
 
-// processURL processes a single URL and returns all formats
+// processURL processes a single URL and returns all formats using tiered scraping
 func processURL(targetURL string) models.ContentResponse {
+	fmt.Printf("[CONTENT SCRAPER] Starting tiered scraping for URL: %s\n", targetURL)
+	
+	// Tier 1: Try HTML-based scraping first
+	fmt.Printf("[CONTENT SCRAPER] Tier 1: Attempting HTML scraping for %s\n", targetURL)
+	htmlResponse := tryHTMLScraping(targetURL)
+	
+	// If HTML scraping succeeds and returns meaningful content, use it
+	if htmlResponse.Error == "" && len(strings.TrimSpace(htmlResponse.Markdown)) > 100 {
+		fmt.Printf("[CONTENT SCRAPER] Tier 1: SUCCESS - HTML scraping returned %d chars for %s\n", len(htmlResponse.Markdown), targetURL)
+		return htmlResponse
+	}
+	
+	fmt.Printf("[CONTENT SCRAPER] Tier 1: FAILED - HTML scraping failed for %s (error: %s, content length: %d)\n", targetURL, htmlResponse.Error, len(strings.TrimSpace(htmlResponse.Markdown)))
+	
+	// Tier 2: Fallback to browser-based scraping if HTML scraping fails or returns minimal content
+	fmt.Printf("[CONTENT SCRAPER] Tier 2: Attempting browser scraping for %s\n", targetURL)
+	browserResponse := tryBrowserScraping(targetURL)
+	if browserResponse.Error == "" {
+		fmt.Printf("[CONTENT SCRAPER] Tier 2: SUCCESS - Browser scraping returned %d chars for %s\n", len(browserResponse.Markdown), targetURL)
+		return browserResponse
+	}
+	
+	fmt.Printf("[CONTENT SCRAPER] Tier 2: FAILED - Browser scraping failed for %s (error: %s)\n", targetURL, browserResponse.Error)
+	
+	// If both methods fail, return the HTML response with additional context
+	if htmlResponse.Error != "" {
+		// Add browser fallback info to the original error
+		if strings.Contains(browserResponse.Error, "browser not available") {
+			htmlResponse.Error = htmlResponse.Error + " (Browser fallback unavailable: headless browser not available in this environment)"
+		} else {
+			htmlResponse.Error = htmlResponse.Error + fmt.Sprintf(" (Browser fallback also failed: %s)", browserResponse.Error)
+		}
+		fmt.Printf("[CONTENT SCRAPER] ALL TIERS FAILED for %s - Final error: %s\n", targetURL, htmlResponse.Error)
+		return htmlResponse
+	}
+	
+	fmt.Printf("[CONTENT SCRAPER] Returning browser response for %s\n", targetURL)
+	return browserResponse
+}
+
+// tryHTMLScraping attempts to scrape content using HTTP client and HTML parsing
+func tryHTMLScraping(targetURL string) models.ContentResponse {
 	response := models.ContentResponse{
 		URL: targetURL,
 	}
@@ -453,6 +497,12 @@ func processURL(targetURL string) models.ContentResponse {
 		return response
 	}
 	defer resp.Body.Close()
+
+	// Check for 403/blocked responses
+	if resp.StatusCode == 403 || resp.StatusCode == 429 {
+		response.Error = fmt.Sprintf("HTTP %d: %s (blocked by server, trying browser fallback)", resp.StatusCode, resp.Status)
+		return response
+	}
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
@@ -497,4 +547,252 @@ func processURL(targetURL string) models.ContentResponse {
 	}
 
 	return response
+}
+
+// tryBrowserScraping attempts to scrape content using a headless browser (Rod)
+func tryBrowserScraping(targetURL string) models.ContentResponse {
+	response := models.ContentResponse{
+		URL: targetURL,
+	}
+
+	// Try to get content using headless browser
+	htmlContent, err := scrapeWithBrowser(targetURL)
+	if err != nil {
+		// If browser fails for any reason, try aggressive HTTP as fallback
+		aggressiveResponse := tryAggressiveHTTP(targetURL)
+		if aggressiveResponse.Error == "" {
+			return aggressiveResponse
+		}
+		
+		// If both browser and aggressive HTTP fail, return browser error with context
+		response.Error = fmt.Sprintf("Browser scraping failed: %s (Aggressive HTTP also failed: %s)", err.Error(), aggressiveResponse.Error)
+		return response
+	}
+
+	// Process the HTML content
+	if markdown, err := convertToMarkdown(htmlContent); err == nil {
+		response.Markdown = markdown
+	} else {
+		response.Markdown = "Error converting to markdown: " + err.Error()
+	}
+
+	// Set response fields
+	response.StatusCode = 200
+	response.ContentType = "text/html"
+	response.Headers = map[string]string{
+		"Content-Type": "text/html",
+		"X-Scraped-With": "Browser",
+	}
+
+	// Calculate sizes
+	response.Sizes = models.ContentSizes{
+		Markdown: len(response.Markdown),
+	}
+
+	return response
+}
+
+// tryAggressiveHTTP attempts aggressive HTTP scraping with different user agents and headers
+func tryAggressiveHTTP(targetURL string) models.ContentResponse {
+	fmt.Printf("[AGGRESSIVE HTTP] Starting aggressive HTTP scraping for %s\n", targetURL)
+	
+	response := models.ContentResponse{
+		URL: targetURL,
+	}
+
+	// Different user agents to try
+	userAgents := []string{
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/121.0",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+	}
+
+	for i, ua := range userAgents {
+		fmt.Printf("[AGGRESSIVE HTTP] Attempt %d/%d for %s using UA: %s\n", i+1, len(userAgents), targetURL, ua[:50]+"...")
+		
+		// Add delay between attempts
+		if i > 0 {
+			fmt.Printf("[AGGRESSIVE HTTP] Waiting %d seconds before attempt %d\n", i, i+1)
+			time.Sleep(time.Duration(i) * time.Second)
+		}
+
+		client := &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				// Allow up to 10 redirects
+				if len(via) >= 10 {
+					return fmt.Errorf("too many redirects")
+				}
+				// Set headers for redirect requests too
+				req.Header.Set("User-Agent", ua)
+				return nil
+			},
+		}
+
+		httpReq, err := http.NewRequest("GET", targetURL, nil)
+		if err != nil {
+			continue
+		}
+
+		// Set aggressive headers
+		httpReq.Header.Set("User-Agent", ua)
+		httpReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+		httpReq.Header.Set("Accept-Language", "en-US,en;q=0.9")
+		httpReq.Header.Set("Accept-Encoding", "identity") // Disable compression for better compatibility
+		httpReq.Header.Set("DNT", "1")
+		httpReq.Header.Set("Connection", "keep-alive")
+		httpReq.Header.Set("Upgrade-Insecure-Requests", "1")
+		
+		// Add browser-specific headers
+		if strings.Contains(ua, "Chrome") {
+			httpReq.Header.Set("Sec-Fetch-Dest", "document")
+			httpReq.Header.Set("Sec-Fetch-Mode", "navigate")
+			httpReq.Header.Set("Sec-Fetch-Site", "none")
+			httpReq.Header.Set("Sec-Fetch-User", "?1")
+		}
+		
+		httpReq.Header.Set("Cache-Control", "max-age=0")
+
+		// Add referer for some attempts
+		if i > 0 {
+			httpReq.Header.Set("Referer", "https://www.google.com/")
+		}
+		
+		// Add random delay
+		if i > 2 {
+			httpReq.Header.Set("Referer", "https://www.bing.com/")
+		}
+
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			fmt.Printf("[AGGRESSIVE HTTP] Attempt %d FAILED for %s: %v\n", i+1, targetURL, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		fmt.Printf("[AGGRESSIVE HTTP] Attempt %d got status %d for %s\n", i+1, resp.StatusCode, targetURL)
+
+		// If successful (200, 201, etc.), process the response
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				continue
+			}
+
+			rawContent := string(body)
+			contentType := resp.Header.Get("Content-Type")
+			isHTML := strings.Contains(strings.ToLower(contentType), "text/html")
+
+			response.StatusCode = resp.StatusCode
+			response.ContentType = contentType
+			response.Headers = map[string]string{
+				"Content-Type": contentType,
+				"X-Scraped-With": fmt.Sprintf("Aggressive-HTTP-UA%d", i+1),
+			}
+
+			if isHTML {
+				if markdown, err := convertToMarkdown(rawContent); err == nil {
+					response.Markdown = markdown
+				} else {
+					response.Markdown = "Error converting to markdown: " + err.Error()
+				}
+			} else {
+				response.Markdown = rawContent
+			}
+
+			response.Sizes = models.ContentSizes{
+				Markdown: len(response.Markdown),
+			}
+
+			fmt.Printf("[AGGRESSIVE HTTP] SUCCESS on attempt %d for %s - got %d chars\n", i+1, targetURL, len(response.Markdown))
+			return response
+		}
+	}
+
+	fmt.Printf("[AGGRESSIVE HTTP] ALL ATTEMPTS FAILED for %s\n", targetURL)
+	response.Error = "All aggressive HTTP attempts failed (browser not available in this environment)"
+	return response
+}
+
+// scrapeWithBrowser uses Rod (headless Firefox) to scrape JavaScript-heavy pages
+func scrapeWithBrowser(targetURL string) (string, error) {
+	// Try to launch Firefox with minimal settings for better Docker compatibility
+	launch := launcher.New().
+		Bin("/usr/bin/firefox").
+		Headless(true).
+		Set("no-sandbox").
+		Set("disable-gpu").
+		Set("disable-dev-shm-usage")
+
+	// Try to launch browser with error handling
+	browserURL, err := launch.Launch()
+	if err != nil {
+		return "", fmt.Errorf("failed to launch browser: %v", err)
+	}
+
+	browser := rod.New().ControlURL(browserURL)
+	defer func() {
+		// Safe cleanup
+		if browser != nil {
+			browser.Close()
+		}
+	}()
+
+	// Create page with timeout and error handling
+	page := browser.Timeout(30 * time.Second).MustPage()
+	defer func() {
+		if page != nil {
+			page.Close()
+		}
+	}()
+
+	// Set basic stealth properties for Firefox
+	_, err = page.Evaluate(rod.Eval(`
+		// Override webdriver property
+		Object.defineProperty(navigator, 'webdriver', {
+			get: () => undefined,
+		});
+		
+		// Set languages
+		Object.defineProperty(navigator, 'languages', {
+			get: () => ['en-US', 'en'],
+		});
+	`))
+	if err != nil {
+		// Continue even if stealth setup fails
+		fmt.Printf("Warning: Failed to set stealth properties: %v\n", err)
+	}
+
+	// Navigate to the URL
+	err = page.Navigate(targetURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to navigate to URL: %v", err)
+	}
+
+	// Wait for page to load
+	err = page.WaitLoad()
+	if err != nil {
+		return "", fmt.Errorf("failed to wait for page load: %v", err)
+	}
+
+	// Wait a bit more for JavaScript to execute
+	time.Sleep(2 * time.Second)
+
+	// Try to wait for common content containers to load (optional)
+	page.Timeout(5 * time.Second).Element("body")
+
+	// Get the page HTML content
+	html, err := page.HTML()
+	if err != nil {
+		return "", fmt.Errorf("failed to get page HTML: %v", err)
+	}
+
+	// Check if we got meaningful content
+	if len(strings.TrimSpace(html)) < 100 {
+		return "", fmt.Errorf("page returned minimal content")
+	}
+
+	return html, nil
 }
