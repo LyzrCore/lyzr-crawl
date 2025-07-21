@@ -31,6 +31,39 @@ func InitMongoDB(mongoURI, dbName string) error {
 	config.JobsCollection = db.Collection("jobs")
 
 	log.Printf("Connected to MongoDB: %s/%s", mongoURI, dbName)
+
+	// Create TTL index for automatic job cleanup
+	if err := CreateJobsTTLIndex(); err != nil {
+		log.Printf("Warning: Failed to create TTL index for jobs cleanup: %v", err)
+		// Don't fail initialization, just log the warning
+	}
+
+	return nil
+}
+
+// CreateJobsTTLIndex creates a TTL index on the jobs collection to automatically delete old jobs
+func CreateJobsTTLIndex() error {
+	if config.JobsCollection == nil {
+		return fmt.Errorf("jobs collection not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Create TTL index on created_at field with 24-hour expiration
+	indexModel := mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "created_at", Value: 1},
+		},
+		Options: options.Index().SetExpireAfterSeconds(86400), // 24 hours = 86400 seconds
+	}
+
+	indexName, err := config.JobsCollection.Indexes().CreateOne(ctx, indexModel)
+	if err != nil {
+		return fmt.Errorf("failed to create TTL index: %v", err)
+	}
+
+	log.Printf("Created TTL index '%s' on jobs collection - jobs will auto-expire after 24 hours", indexName)
 	return nil
 }
 

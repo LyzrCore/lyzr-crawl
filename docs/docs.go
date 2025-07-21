@@ -149,7 +149,7 @@ const docTemplate = `{
         },
         "/health": {
             "get": {
-                "description": "Check if the API server is running",
+                "description": "Returns the health status of the API and its dependencies",
                 "produces": [
                     "application/json"
                 ],
@@ -162,9 +162,7 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     }
                 }
