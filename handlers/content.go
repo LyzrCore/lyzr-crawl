@@ -14,7 +14,9 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 )
 
 // cleanContentForLLM extracts and cleans text content from HTML for LLM consumption
@@ -458,11 +460,143 @@ func processURL(targetURL string) models.ContentResponse {
 	return browserResponse
 }
 
+// tryJSDOMRendering performs lightweight browser automation with basic JavaScript rendering and scrolling
+func tryJSDOMRendering(targetURL string) (string, error) {
+	fmt.Printf("[TIER 1 - JSDOM] Starting lightweight browser rendering for %s\n", targetURL)
+
+	// Add recovery for browser panics with proper error return
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[TIER 1 - JSDOM] Browser panic recovered for %s: %v\n", targetURL, r)
+		}
+	}()
+
+	// Create a lightweight browser instance with error handling
+	var browser *rod.Browser
+	var l *launcher.Launcher
+	
+	// Always use system Chromium instead of downloading
+	l = launcher.New().
+		Bin("/usr/bin/chromium"). // Force use of system browser (Alpine path)
+		Headless(true).
+		NoSandbox(true).
+		Set("disable-dev-shm-usage").
+		Set("disable-extensions").
+		Set("disable-gpu").
+		Set("disable-web-security").
+		Set("disable-background-timer-throttling").
+		Set("disable-backgrounding-occluded-windows").
+		Set("disable-renderer-backgrounding")
+	
+	fmt.Printf("[TIER 1 - JSDOM] Using system Chromium (no download) for %s\n", targetURL)
+
+	controlURL, err := l.Launch()
+	if err != nil {
+		return "", fmt.Errorf("failed to launch browser: %v", err)
+	}
+	
+	browser = rod.New().ControlURL(controlURL)
+	err = browser.Connect()
+	if err != nil {
+		l.Cleanup()
+		return "", fmt.Errorf("failed to connect to browser: %v", err)
+	}
+
+	// Ensure cleanup happens properly
+	defer func() {
+		if browser != nil {
+			browser.Close()
+		}
+		if l != nil {
+			l.Cleanup()
+		}
+	}()
+
+	// Create page with shorter timeout for Tier 1 (fast processing)
+	page, err := browser.Timeout(10 * time.Second).Page(proto.TargetCreateTarget{URL: targetURL})
+	if err != nil {
+		return "", fmt.Errorf("failed to create page: %v", err)
+	}
+	defer page.MustClose()
+
+	// Navigate with timeout
+	err = page.Navigate(targetURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to navigate: %v", err)
+	}
+
+	// Wait for page to load with timeout handling
+	err = page.WaitLoad()
+	if err != nil {
+		fmt.Printf("[TIER 1 - JSDOM] Warning: WaitLoad failed for %s: %v - continuing anyway\n", targetURL, err)
+	}
+
+	// Perform simple scrolling using Rod's built-in methods instead of eval
+	fmt.Printf("[TIER 1 - JSDOM] Performing scrolling to trigger lazy-loaded content for %s\n", targetURL)
+	
+	// Use Rod's built-in scroll methods which are more reliable
+	maxScrollSteps := 5
+	for i := 0; i < maxScrollSteps; i++ {
+		// Try to scroll using different methods
+		err := func() error {
+			// Method 1: Try keyboard PageDown
+			if err := page.KeyActions().Press(input.PageDown).Do(); err == nil {
+				return nil
+			}
+			
+			// Method 2: Try mouse wheel scroll
+			if err := page.Mouse.Scroll(0, 800, 3); err == nil {
+				return nil
+			}
+			
+			// Method 3: Simple eval fallback
+			_, err := page.Eval("window.scrollBy(0, 800)")
+			return err
+		}()
+		
+		if err != nil {
+			fmt.Printf("[TIER 1 - JSDOM] Warning: Scroll step %d failed for %s: %v\n", i+1, targetURL, err)
+		} else {
+			fmt.Printf("[TIER 1 - JSDOM] Scroll step %d/%d completed for %s\n", i+1, maxScrollSteps, targetURL)
+		}
+		
+		// Wait for content to load
+		time.Sleep(800 * time.Millisecond)
+	}
+	
+	// Final scroll to bottom using reliable mouse scroll (no eval)
+	fmt.Printf("[TIER 1 - JSDOM] Performing final scroll to bottom for %s\n", targetURL)
+	page.Mouse.Scroll(0, 5000, 10) // Large scroll to reach absolute bottom
+	fmt.Printf("[TIER 1 - JSDOM] Final scroll to bottom completed for %s\n", targetURL)
+	
+	time.Sleep(1 * time.Second)
+	fmt.Printf("[TIER 1 - JSDOM] Completed scrolling sequence for %s\n", targetURL)
+	
+	// Wait briefly for final content to settle
+	time.Sleep(800 * time.Millisecond)
+
+	// Scroll back to top for consistent content extraction
+	page.MustEval(`window.scrollTo(0, 0)`)
+	time.Sleep(200 * time.Millisecond)
+
+	// Get the final HTML content after JavaScript execution and scrolling
+	html, err := page.HTML()
+	if err != nil {
+		return "", fmt.Errorf("failed to get HTML content: %v", err)
+	}
+
+	fmt.Printf("[TIER 1 - JSDOM] Successfully extracted content after scrolling for %s (size: %d bytes)\n", targetURL, len(html))
+	
+	return html, nil
+}
+
 // tryHTMLScraping attempts to scrape content using HTTP client and HTML parsing
 func tryHTMLScraping(targetURL string) models.ContentResponse {
 	response := models.ContentResponse{
 		URL: targetURL,
 	}
+
+	fmt.Printf("[TIER 1 - HTML+JSDOM] Starting enhanced HTML scraping with JSDOM rendering for URL: %s\n", targetURL)
 
 	// Try URL fallback to find an accessible URL
 	actualURL, fallbackInfo := utils.FindAccessibleURL(targetURL, "")
@@ -473,6 +607,35 @@ func tryHTMLScraping(targetURL string) models.ContentResponse {
 		return response
 	}
 
+	// Try browser-based JSDOM rendering first for better JS support
+	if htmlContent, err := tryJSDOMRendering(actualURL); err == nil && htmlContent != "" {
+		fmt.Printf("[TIER 1 - HTML+JSDOM] Successfully rendered with JSDOM for %s\n", actualURL)
+		
+		response.StatusCode = 200
+		response.ContentType = "text/html; charset=UTF-8"
+		response.Headers = map[string]string{
+			"Content-Type": "text/html; charset=UTF-8",
+			"X-Rendered-By": "JSDOM-Tier1",
+		}
+
+		// Process JSDOM-rendered HTML content
+		if markdown, err := convertToMarkdown(htmlContent); err == nil {
+			response.Markdown = markdown
+		} else {
+			response.Markdown = "Error converting JSDOM content to markdown: " + err.Error()
+		}
+
+		// Calculate sizes
+		response.Sizes = models.ContentSizes{
+			Markdown: len(response.Markdown),
+		}
+
+		return response
+	} else {
+		fmt.Printf("[TIER 1 - HTML+JSDOM] JSDOM rendering failed for %s: %v - falling back to HTTP scraping\n", actualURL, err)
+	}
+
+	// Fallback to original HTTP scraping method
 	// Create HTTP client with timeout
 	client := &http.Client{
 		Timeout: 30 * time.Second,

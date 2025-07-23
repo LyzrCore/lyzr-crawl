@@ -543,6 +543,14 @@ const docTemplate = `{
                 }
             }
         }
+    },
+    "securityDefinitions": {
+        "ApiKeyAuth": {
+            "description": "API key authentication. Use the header 'X-API-Key: sk-default-cnsksmcnneheufhruenchguenhgcneirhgcehlnhacueraicnrhecnleiurcnhiunrciuahcnuh'",
+            "type": "apiKey",
+            "name": "X-API-Key",
+            "in": "header"
+        }
     }
 }`
 

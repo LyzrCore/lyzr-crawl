@@ -26,11 +26,23 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o crawler .
 # Final stage - minimal image
 FROM alpine:latest
 
-# Install curl for health checks, ca-certificates for HTTPS, and Firefox for headless browsing
-RUN apk --no-cache add ca-certificates curl tzdata firefox
+# Install dependencies for headless browsing and browser automation
+RUN apk --no-cache add ca-certificates curl tzdata firefox chromium \
+    # Dependencies for browser automation
+    nss freetype freetype-dev harfbuzz \
+    # Additional dependencies for Chromium
+    ttf-freefont
 
-# Create app directory
+# Set environment variables for browser automation
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-web-security"
+# Disable Rod auto-download by pointing to system binary
+ENV ROD_LAUNCHER_BIN=/usr/bin/chromium
+
+# Create app directory and cache directory
 WORKDIR /root/
+# Create cache directory for browser automation (optional, since we're using system browser)
+RUN mkdir -p /root/.cache/rod
 
 # Copy the binary from builder stage
 COPY --from=builder /app/crawler .

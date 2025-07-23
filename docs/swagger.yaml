@@ -365,4 +365,10 @@ paths:
       summary: Connect to live crawl updates
       tags:
       - websocket
+securityDefinitions:
+  ApiKeyAuth:
+    description: 'API key authentication. Use the header ''X-API-Key: sk-default-cnsksmcnneheufhruenchguenhgcneirhgcehlnhacueraicnrhecnleiurcnhiunrciuahcnuh'''
+    in: header
+    name: X-API-Key
+    type: apiKey
 swagger: "2.0"

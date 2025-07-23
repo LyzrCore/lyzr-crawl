@@ -27,6 +27,11 @@ import (
 // @host localhost:8080
 // @BasePath /
 
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name X-API-Key
+// @description API key authentication. Use the header 'X-API-Key: sk-default-cnsksmcnneheufhruenchguenhgcneirhgcehlnhacueraicnrhecnleiurcnhiunrciuahcnuh'
+
 // StartAPIServer starts the REST API server
 func StartAPIServer(port string, mongoURI, dbName, rabbitMQURL string) {
 	// Initialize ScrapeOps for stealth headers
