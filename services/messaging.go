@@ -173,9 +173,15 @@ func ConsumeJobEvents(queueName string, eventChan chan<- models.CrawlEvent, stop
 
 // PublishCrawlEvent publishes an event to RabbitMQ (lightweight)
 func PublishCrawlEvent(event models.CrawlEvent) {
+	log.Printf("[RABBITMQ] Publishing event: JobID=%s, Type=%s", event.JobID, event.Type)
+	
 	if config.RabbitChannel == nil {
-		// If RabbitMQ is not available, silently continue
-		// This keeps the crawler lightweight even without RabbitMQ
+		log.Printf("[RABBITMQ] ERROR: RabbitChannel is nil, cannot publish event")
+		return
+	}
+	
+	if config.RabbitChannel.IsClosed() {
+		log.Printf("[RABBITMQ] ERROR: RabbitChannel is closed, cannot publish event")
 		return
 	}
 
@@ -204,7 +210,9 @@ func PublishCrawlEvent(event models.CrawlEvent) {
 			},
 		)
 		if err != nil {
-			log.Printf("Failed to publish event: %v", err)
+			log.Printf("[RABBITMQ] ERROR: Failed to publish event: %v", err)
+		} else {
+			log.Printf("[RABBITMQ] Successfully published event: %s", routingKey)
 		}
 	}()
 }
