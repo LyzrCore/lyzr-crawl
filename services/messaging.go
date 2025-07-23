@@ -51,6 +51,17 @@ func CreateJobQueue(jobID string) (string, error) {
 		return "", fmt.Errorf("RabbitMQ not connected")
 	}
 
+	// Check if channel is closed and reconnect if needed
+	if config.RabbitChannel.IsClosed() {
+		log.Printf("[RABBITMQ] Channel is closed, attempting to reconnect...")
+		var err error
+		config.RabbitChannel, err = config.RabbitConnection.Channel()
+		if err != nil {
+			return "", fmt.Errorf("failed to recreate channel: %v", err)
+		}
+		log.Printf("[RABBITMQ] Successfully recreated channel")
+	}
+
 	// Create a unique queue name for this job
 	queueName := fmt.Sprintf("crawler_ws_%s_%d", jobID, time.Now().UnixNano())
 	
@@ -97,6 +108,17 @@ func CreateJobQueue(jobID string) (string, error) {
 func ConsumeJobEvents(queueName string, eventChan chan<- models.CrawlEvent, stopChan <-chan bool) error {
 	if config.RabbitChannel == nil {
 		return fmt.Errorf("RabbitMQ not connected")
+	}
+
+	// Check if channel is closed and reconnect if needed
+	if config.RabbitChannel.IsClosed() {
+		log.Printf("[RABBITMQ] Channel is closed, attempting to reconnect...")
+		var err error
+		config.RabbitChannel, err = config.RabbitConnection.Channel()
+		if err != nil {
+			return fmt.Errorf("failed to recreate channel: %v", err)
+		}
+		log.Printf("[RABBITMQ] Successfully recreated channel")
 	}
 
 	// Start consuming messages
