@@ -1,49 +1,26 @@
 services:
-  # MongoDB Database
-  mongodb:
-    image: mongo:7-jammy
-    container_name: crawler_mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: crawler
-      MONGO_INITDB_ROOT_PASSWORD: crawler123
-      MONGO_INITDB_DATABASE: crawler
-    volumes:
-      - mongodb_data:/data/db
-      - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
-    networks:
-      - crawler_network
-    healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 40s
-
   # RabbitMQ Message Queue
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    container_name: crawler_rabbitmq
-    restart: unless-stopped
-    ports:
-      - "5672:5672"    # AMQP port
-      - "15672:15672"  # Management UI port
-    environment:
-      RABBITMQ_DEFAULT_USER: crawler
-      RABBITMQ_DEFAULT_PASS: crawler123
-      RABBITMQ_DEFAULT_VHOST: /
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
-    networks:
-      - crawler_network
-    healthcheck:
-      test: rabbitmq-diagnostics -q ping
-      interval: 30s
-      timeout: 30s
-      retries: 3
+  # rabbitmq:
+  #   image: rabbitmq:3-management-alpine
+  #   container_name: crawler_rabbitmq
+  #   restart: unless-stopped
+  #   ports:
+  #     - "5672:5672"    # AMQP port
+  #     - "15672:15672"  # Management UI port
+  #   environment:
+  #     RABBITMQ_DEFAULT_USER: crawler
+  #     RABBITMQ_DEFAULT_PASS: crawler123
+  #     RABBITMQ_DEFAULT_VHOST: /
+  #   volumes:
+  #     - rabbitmq_data:/var/lib/rabbitmq
+  #     - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+  #   networks:
+  #     - crawler_network
+  #   healthcheck:
+  #     test: rabbitmq-diagnostics -q ping
+  #     interval: 30s
+  #     timeout: 30s
+  #     retries: 3
 
   # Web Crawler API
   crawler-api:
@@ -55,15 +32,13 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - MONGO_URI=mongodb://crawler:crawler123@mongodb:27017/crawler?authSource=admin
+      - MONGO_URI=${MONGO_URI:-mongodb://localhost:27017/crawler}
       - RABBITMQ_URL=amqp://crawler:crawler123@rabbitmq:5672/
       - PORT=8080
       - GIN_MODE=release
-    depends_on:
-      mongodb:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+    # depends_on:
+    #   rabbitmq:
+    #     condition: service_healthy
     networks:
       - crawler_network
     healthcheck:
@@ -74,8 +49,6 @@ services:
       start_period: 40s
 
 volumes:
-  mongodb_data:
-    driver: local
   rabbitmq_data:
     driver: local
 
