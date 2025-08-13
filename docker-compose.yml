@@ -33,9 +33,10 @@ services:
       - "8080:8080"
     environment:
       - MONGO_URI=${MONGO_URI:-mongodb://localhost:27017/crawler}
-      - RABBITMQ_URL=amqp://crawler:crawler123@rabbitmq:5672/
+      - RABBITMQ_URL=${RABBITMQ_URL:-}
       - PORT=8080
       - GIN_MODE=release
+      - API_KEY=${API_KEY:-your-secure-api-key-here}
     # depends_on:
     #   rabbitmq:
     #     condition: service_healthy

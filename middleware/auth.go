@@ -2,11 +2,21 @@ package middleware
 
 import (
 	"net/http"
+	"os"
 	"strings"
 )
 
-// Hardcoded API key for authentication
-const API_KEY = "sk-default-cnsksmcnneheufhruenchguenhgcneirhgcehlnhacueraicnrhecnleiurcnhiunrciuahcnuh"
+// Default API key for authentication - CHANGE THIS IN PRODUCTION!
+// You can set the API_KEY environment variable to override this default
+var API_KEY = getAPIKey()
+
+func getAPIKey() string {
+	if key := os.Getenv("API_KEY"); key != "" {
+		return key
+	}
+	// Default key for development - MUST be changed in production
+	return "your-secure-api-key-here"
+}
 
 // IsValidAPIKey checks if the provided API key is valid
 func IsValidAPIKey(apiKey string) bool {
