@@ -1,4 +1,4 @@
-# 🕷️ Web Crawler API
+# 🕷️ Lyzr Crawl
 
 <div align="center">
 
@@ -8,7 +8,7 @@
 [![MongoDB](https://img.shields.io/badge/MongoDB-4EA94B?logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?logo=rabbitmq&logoColor=white)](https://www.rabbitmq.com/)
 
-**A blazing-fast, distributed web crawler built with Go**  
+**A high-performance web crawler API built with Go**  
 Extract content, discover URLs, and crawl websites at scale with real-time progress updates
 
 [Features](#-features) • [Quick Start](#-quick-start) • [API](#-api-documentation) • [Examples](#-examples) • [Contributing](#-contributing)
@@ -25,7 +25,7 @@ Extract content, discover URLs, and crawl websites at scale with real-time progr
 
 ### 🚀 Performance
 - **Concurrent crawling** with configurable workers
-- **Distributed architecture** with MongoDB & RabbitMQ
+- **MongoDB storage** for persistent job tracking
 - **Smart rate limiting** to respect server resources
 - **Automatic retries** with exponential backoff
 
@@ -46,7 +46,7 @@ Extract content, discover URLs, and crawl websites at scale with real-time progr
 ### 📊 Real-time Monitoring
 - **WebSocket live updates** for crawl progress
 - **Detailed job tracking** with statistics
-- **Event-driven architecture** for scalability
+- **Progress tracking** with completion percentages
 - **RESTful API** with Swagger documentation
 
 </td>
@@ -68,8 +68,8 @@ Extract content, discover URLs, and crawl websites at scale with real-time progr
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/crawler.git
-cd crawler
+git clone https://github.com/LyzrCore/lyzr-crawl.git
+cd lyzr-crawl
 
 # 2. Set up environment
 cp .env.example .env
@@ -246,39 +246,49 @@ SCRAPEOPS_API_KEY=your-key                  # Proxy rotation service
 
 ## 🛠️ Development
 
-### Running Tests
-
-```bash
-# Run all tests
-go test ./...
-
-# Run with coverage
-go test -cover -coverprofile=coverage.out ./...
-
-# Run specific package
-go test ./services/...
-
-# Run with race detection
-go test -race ./...
-```
-
 ### Project Structure
 
 ```
-crawler/
-├── main.go              # Entry point
-├── server.go            # HTTP server setup
+lyzr-crawl/
+├── config/              # Configuration files
+│   ├── database.go     # Database config
+│   ├── rabbitmq.go     # RabbitMQ config
+│   └── scrapeops.go    # ScrapeOps integration
 ├── handlers/            # HTTP request handlers
+│   ├── content.go      # Content extraction endpoints
 │   ├── crawl.go        # Crawl job management
-│   ├── content.go      # Content extraction
-│   └── websocket.go    # Real-time updates
+│   ├── health.go       # Health check endpoints
+│   ├── jobs.go         # Job listing and status
+│   └── websocket.go    # WebSocket connections
 ├── services/            # Core business logic
-│   ├── crawler.go      # Crawling engine
-│   ├── messaging.go    # RabbitMQ integration
-│   └── database.go     # MongoDB operations
+│   ├── crawler.go      # Main crawling engine
+│   ├── database.go     # MongoDB operations
+│   ├── messaging.go    # RabbitMQ messaging
+│   ├── robots.go       # Robots.txt parser
+│   ├── sitemap.go      # Sitemap parser
+│   └── stealth.go      # Anti-detection features
 ├── models/              # Data structures
+│   ├── content.go      # Content response models
+│   ├── crawl.go        # Crawl request/response
+│   ├── events.go       # Event models
+│   ├── job.go          # Job tracking models
+│   └── sitemap.go      # Sitemap models
 ├── middleware/          # HTTP middleware
-└── utils/              # Helper functions
+│   ├── auth.go         # API key authentication
+│   └── logging.go      # Request logging
+├── utils/               # Helper functions
+│   └── url.go          # URL utilities
+├── docs/                # API documentation
+│   ├── docs.go         # Generated docs
+│   ├── swagger.json    # Swagger spec
+│   └── swagger.yaml    # Swagger spec
+├── ui/                  # Web UI assets
+│   └── index.html      # Simple web interface
+├── main.go              # Application entry point
+├── server.go            # HTTP server setup
+├── docker-compose.yml   # Docker composition
+├── Dockerfile           # Container definition
+└── README.md            # This file
 ```
 
 ## 🤝 Contributing
@@ -289,25 +299,27 @@ We love contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for 
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+3. Make your changes
+4. Test your changes locally
+5. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+6. Push to the branch (`git push origin feature/AmazingFeature`)
+7. Open a Pull Request
 
-## 📊 Performance Benchmarks
+### Development Setup
 
-<details>
-<summary>View benchmark results</summary>
+```bash
+# Install dependencies
+go mod download
 
-| Metric | Value |
-|--------|-------|
-| URLs/second | ~100-500 (depends on site) |
-| Concurrent requests | Up to 100 |
-| Memory usage | ~50-200MB |
-| Response time | <100ms (API) |
+# Build the project
+go build -o lyzr-crawl .
 
-*Benchmarks performed on a standard VPS with 4 vCPUs and 8GB RAM*
+# Run locally
+./lyzr-crawl -mongo-uri="mongodb://localhost:27017/crawler"
 
-</details>
+# Generate Swagger docs
+swag init -g server.go
+```
 
 ## 🐛 Troubleshooting
 
@@ -347,14 +359,16 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 Built with these amazing tools:
 - [Go](https://golang.org/) - The programming language
 - [Rod](https://github.com/go-rod/rod) - Browser automation
-- [Gin](https://github.com/gin-gonic/gin) - HTTP framework
+- [Gorilla Mux](https://github.com/gorilla/mux) - HTTP router
 - [MongoDB](https://www.mongodb.com/) - Database
-- [RabbitMQ](https://www.rabbitmq.com/) - Message broker
+- [RabbitMQ](https://www.rabbitmq.com/) - Message broker (optional)
 
 ---
 
 <div align="center">
 
-[Report Bug](https://github.com/yourusername/crawler/issues) • [Request Feature](https://github.com/yourusername/crawler/issues)
+**Lyzr Crawl** - Part of the [Lyzr.ai](https://www.lyzr.ai) ecosystem
+
+[Report Bug](https://github.com/LyzrCore/lyzr-crawl/issues) • [Request Feature](https://github.com/LyzrCore/lyzr-crawl/issues)
 
 </div>

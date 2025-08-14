@@ -12,9 +12,9 @@ import (
 	_ "crawler/docs" // This line is required for Swagger
 )
 
-// @title Web Crawler API
+// @title Lyzr Crawl API
 // @version 1.0
-// @description A fast web crawler API that extracts URLs from websites and stores results in MongoDB
+// @description A high-performance web crawler API that extracts content and URLs from websites
 // @termsOfService http://swagger.io/terms/
 
 // @contact.name API Support

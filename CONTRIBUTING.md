@@ -1,6 +1,6 @@
-# Contributing to Web Crawler API
+# Contributing to Lyzr Crawl
 
-First off, thank you for considering contributing to Web Crawler API! It's people like you that make this project such a great tool.
+First off, thank you for considering contributing to Lyzr Crawl! It's people like you that make this project such a great tool.
 
 ## Code of Conduct
 
@@ -107,12 +107,6 @@ Fixes #123
 * Comment your code where necessary
 * Write clear commit messages
 
-## Testing
-
-* Write tests for new functionality
-* Ensure all tests pass before submitting PR
-* Aim for good test coverage
-* Include both unit and integration tests where appropriate
 
 ## Questions?
 
