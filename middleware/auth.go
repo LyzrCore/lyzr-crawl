@@ -27,9 +27,9 @@ func IsValidAPIKey(apiKey string) bool {
 func APIKeyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip authentication for OPTIONS (CORS preflight), health check, swagger docs, and WebSocket endpoints
-		if r.Method == "OPTIONS" || r.URL.Path == "/" || r.URL.Path == "/health" || 
-		   strings.HasPrefix(r.URL.Path, "/notforhumans/") ||
-		   strings.HasPrefix(r.URL.Path, "/ws/") {
+		if r.Method == "OPTIONS" || r.URL.Path == "/" || r.URL.Path == "/health" ||
+			strings.HasPrefix(r.URL.Path, "/notforhumans/") ||
+			strings.HasPrefix(r.URL.Path, "/ws/") {
 			next.ServeHTTP(w, r)
 			return
 		}

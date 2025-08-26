@@ -27,7 +27,7 @@ import (
 // @Router /crawl [post]
 func HandleCrawl(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[CRAWL API] New crawl request received")
-	
+
 	var req models.CrawlRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("[CRAWL API] ERROR: Invalid JSON in request: %v", err)
@@ -35,7 +35,7 @@ func HandleCrawl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[CRAWL API] Parsed request - URL: %s, Depth: %d, Workers: %d, MaxURLs: %d", 
+	log.Printf("[CRAWL API] Parsed request - URL: %s, Depth: %d, Workers: %d, MaxURLs: %d",
 		req.URL, req.Depth, req.Workers, req.MaxURLs)
 
 	// Validate URL
@@ -67,7 +67,7 @@ func HandleCrawl(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[CRAWL API] Limiting max URLs from %d to 5000", req.MaxURLs)
 		req.MaxURLs = 5000
 	}
-	
+
 	// Set defaults for tier configuration
 	if req.HeadlessTimeout == 0 {
 		req.HeadlessTimeout = 30 // Default 30 seconds
@@ -132,7 +132,7 @@ func HandleCrawl(w http.ResponseWriter, r *http.Request) {
 	// Start crawling in background
 	go func() {
 		log.Printf("[CRAWL API] Starting background crawling for job %s", jobID)
-		
+
 		// Send initial progress event
 		services.PublishCrawlEvent(models.CrawlEvent{
 			Type:      "progress",
@@ -140,11 +140,11 @@ func HandleCrawl(w http.ResponseWriter, r *http.Request) {
 			Progress:  "Starting crawl...",
 			Timestamp: time.Now(),
 		})
-		
+
 		startTime := time.Now()
 		result, err := services.CrawlWebsiteWithTiers(req.URL, req, jobID)
 		duration := time.Since(startTime)
-		
+
 		config.JobsMutex.Lock()
 		if err != nil {
 			log.Printf("[CRAWL API] Job %s FAILED after %v: %v", jobID, duration, err)
@@ -153,12 +153,12 @@ func HandleCrawl(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Printf("[CRAWL API] Job %s COMPLETED after %v - Found %d URLs", jobID, duration, result.TotalURLs)
 			job.Status = "completed"
-			
+
 			// Generate ID for the result (no separate crawls collection needed)
 			result.ID = primitive.NewObjectID()
-			
+
 			job.Result = result
-			
+
 			// Publish completion event to RabbitMQ
 			services.PublishCrawlEvent(models.CrawlEvent{
 				Type:      "completed",
@@ -169,12 +169,11 @@ func HandleCrawl(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		job.UpdatedAt = time.Now()
-		
-		// Update job in MongoDB
+
 		if err := services.UpdateJobInMongoDB(job); err != nil {
 			log.Printf("Failed to update job in MongoDB: %v", err)
 		}
-		
+
 		config.JobsMutex.Unlock()
 	}()
 
@@ -196,11 +195,11 @@ func isValidJobID(jobID string) bool {
 	if len(jobID) < 3 || len(jobID) > 50 {
 		return false
 	}
-	
+
 	for _, char := range jobID {
-		if !((char >= 'a' && char <= 'z') || 
-			(char >= 'A' && char <= 'Z') || 
-			(char >= '0' && char <= '9') || 
+		if !((char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
 			char == '-' || char == '_') {
 			return false
 		}
