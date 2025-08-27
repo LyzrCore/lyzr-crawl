@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crawler/services"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,7 +24,7 @@ import (
 func cleanURL(rawURL string) string {
 	// Trim all whitespace characters including newlines, tabs, etc.
 	cleaned := strings.TrimSpace(rawURL)
-	
+
 	// Remove any control characters and extra whitespace
 	cleaned = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) && r != '\n' && r != '\t' {
@@ -31,15 +32,15 @@ func cleanURL(rawURL string) string {
 		}
 		return r
 	}, cleaned)
-	
+
 	// Replace any remaining newlines or tabs with empty string
 	cleaned = strings.ReplaceAll(cleaned, "\n", "")
 	cleaned = strings.ReplaceAll(cleaned, "\t", "")
 	cleaned = strings.ReplaceAll(cleaned, "\r", "")
-	
+
 	// Trim again after cleanup
 	cleaned = strings.TrimSpace(cleaned)
-	
+
 	return cleaned
 }
 
@@ -66,28 +67,32 @@ func main() {
 	// Define command line flags
 	var (
 		// API mode flags
-		apiMode   = flag.Bool("api", false, "Run as REST API server instead of CLI")
-		port      = flag.String("port", "8080", "API server port")
-		
+		apiMode = flag.Bool("api", false, "Run as REST API server instead of CLI")
+		port    = flag.String("port", "8080", "API server port")
+
 		// CLI mode flags
-		workers    = flag.Int("workers", 10, "Number of concurrent workers")
-		delay      = flag.Duration("delay", 200*time.Millisecond, "Delay between requests")
-		timeout    = flag.Duration("timeout", 30*time.Second, "Request timeout")
-		depth      = flag.Int("depth", 1, "Crawling depth")
-		mongoURI   = flag.String("mongo", "mongodb://localhost:27017", "MongoDB connection URI")
-		mongoDB    = flag.String("db", "crawler", "MongoDB database name")
-		mongoCol   = flag.String("collection", "crawls", "MongoDB collection name")
-		saveOnly   = flag.Bool("save-only", false, "Only save to MongoDB, don't print JSON")
+		workers     = flag.Int("workers", 10, "Number of concurrent workers")
+		delay       = flag.Duration("delay", 200*time.Millisecond, "Delay between requests")
+		timeout     = flag.Duration("timeout", 30*time.Second, "Request timeout")
+		depth       = flag.Int("depth", 1, "Crawling depth")
+		mongoURI    = flag.String("mongo", "mongodb://localhost:27017", "MongoDB connection URI")
+		mongoDB     = flag.String("db", "crawler", "MongoDB database name")
+		mongoCol    = flag.String("collection", "crawls", "MongoDB collection name")
+		saveOnly    = flag.Bool("save-only", false, "Only save to MongoDB, don't print JSON")
 		rabbitMQURL = flag.String("rabbitmq", "amqp://localhost:5672", "RabbitMQ connection URL")
 	)
 	flag.Parse()
+
+	// Initialize global worker pool before starting API or CLI mode
+	services.InitializeGlobalPool()
+	defer services.GlobalPool.Shutdown()
 
 	// Check if running in API mode
 	if *apiMode {
 		StartAPIServer(*port, *mongoURI, *mongoDB, *rabbitMQURL)
 		return
 	}
-	
+
 	args := flag.Args()
 	if len(args) < 1 {
 		fmt.Println("Usage: go run main.go [flags] <URL>")
@@ -111,7 +116,7 @@ func main() {
 	}
 
 	targetURL := args[0]
-	
+
 	// Connect to MongoDB
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(*mongoURI))
 	if err != nil {
@@ -129,14 +134,13 @@ func main() {
 			fmt.Printf("Connected to MongoDB: %s/%s.%s\n", *mongoURI, *mongoDB, *mongoCol)
 		}
 	}
-	
+
 	var collection *mongo.Collection
 	if client != nil {
 		collection = client.Database(*mongoDB).Collection(*mongoCol)
 		defer client.Disconnect(context.Background())
 	}
 
-	
 	// Parse the target URL to get the base domain
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
@@ -151,7 +155,7 @@ func main() {
 		Delay:       *delay,
 	})
 	c.SetRequestTimeout(*timeout)
-	
+
 	// Allow both www and non-www versions of the domain
 	baseDomain := parsedURL.Host
 	allowedDomains := []string{baseDomain}
@@ -174,12 +178,12 @@ func main() {
 	// Find all links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		link := cleanURL(e.Attr("href"))
-		
+
 		// Skip empty links
 		if link == "" {
 			return
 		}
-		
+
 		// Skip non-content URLs (performance optimization)
 		if shouldSkipURL(link) {
 			return
@@ -187,7 +191,7 @@ func main() {
 
 		// Convert relative URLs to absolute
 		absoluteURL := e.Request.AbsoluteURL(link)
-		
+
 		// Parse the absolute URL
 		linkURL, err := url.Parse(absoluteURL)
 		if err != nil {
@@ -202,14 +206,14 @@ func main() {
 				break
 			}
 		}
-		
+
 		if isAllowed {
 			// Clean the URL (remove fragments)
 			cleanURL := linkURL.Scheme + "://" + linkURL.Host + linkURL.Path
 			if linkURL.RawQuery != "" {
 				cleanURL += "?" + linkURL.RawQuery
 			}
-			
+
 			// Thread-safe check and add
 			mu.Lock()
 			alreadyFound := foundURLs[cleanURL]
@@ -218,7 +222,7 @@ func main() {
 				urlList = append(urlList, cleanURL)
 			}
 			mu.Unlock()
-			
+
 			// Visit this URL if we haven't reached max depth and it's new
 			if !alreadyFound && e.Request.Depth < *depth {
 				e.Request.Visit(cleanURL)
@@ -249,7 +253,7 @@ func main() {
 	// Calculate performance stats
 	duration := time.Since(startTime)
 	urlsPerSecond := float64(len(urlList)) / duration.Seconds()
-	
+
 	// Create structured result
 	crawlTime := time.Now()
 	result := CrawlResult{
@@ -265,12 +269,12 @@ func main() {
 		},
 		URLs: urlList,
 	}
-	
+
 	// Save to MongoDB if connected
 	if collection != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		
+
 		insertResult, err := collection.InsertOne(ctx, result)
 		if err != nil {
 			log.Printf("Failed to save to MongoDB: %v\n", err)
@@ -294,24 +298,24 @@ func main() {
 func shouldSkipURL(link string) bool {
 	// Convert to lowercase for case-insensitive matching
 	link = strings.ToLower(link)
-	
+
 	// Skip common file extensions that don't contain links
 	skipExtensions := []string{".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".pdf", ".zip", ".tar", ".gz", ".mp4", ".mp3", ".avi", ".mov", ".wmv", ".flv", ".swf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
-	
+
 	for _, ext := range skipExtensions {
 		if strings.HasSuffix(link, ext) {
 			return true
 		}
 	}
-	
+
 	// Skip common non-content paths
 	skipPatterns := []string{"/admin", "/login", "/logout", "/register", "/signin", "/signup", "/auth", "/api/", "/assets/", "/static/", "/images/", "/img/", "/css/", "/js/", "/fonts/", "mailto:", "tel:", "javascript:", "#"}
-	
+
 	for _, pattern := range skipPatterns {
 		if strings.Contains(link, pattern) {
 			return true
 		}
 	}
-	
+
 	return false
 }
